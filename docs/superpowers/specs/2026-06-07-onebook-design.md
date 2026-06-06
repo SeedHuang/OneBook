@@ -284,7 +284,13 @@ CREATE TABLE settings (
 
 ## 6. UI 界面布局
 
+### 6.0 设计原则
+
+**Ant Design 优先**：所有 UI 元素优先使用 Ant Design 已有组件，不重复造轮子。仅在 Ant Design 无法满足时才自定义组件。
+
 ### 6.1 三栏布局
+
+使用 `App Layout` 组件（`Layout` + `Layout.Sider` + `Layout.Content`）实现三栏结构。
 
 ```
 ┌──────────┬──────────────────────┬──────────────┐
@@ -303,9 +309,35 @@ CREATE TABLE settings (
 
 ### 6.2 响应式
 
-- 各栏宽度可拖拽调整
-- 左右栏可折叠隐藏
-- 对话面板可全屏展开
+- 各栏宽度可拖拽调整（使用 `react-resizable-panels`）
+- 左右栏可折叠隐藏（`Layout.Sider` 自带 collapsible）
+- 对话面板可全屏展开（`Drawer` 或 `Modal`）
+
+### 6.3 Ant Design 组件映射
+
+| 功能场景 | Ant Design 组件 | 说明 |
+|----------|-----------------|------|
+| 整体布局 | `Layout` / `Layout.Sider` / `Layout.Content` | 三栏布局 |
+| 全局导航 | `Menu` (mode="inline") | 左侧导航菜单 |
+| 文件树 | `Tree` | 项目文档列表，支持展开/折叠 |
+| 标签页 | `Tabs` | 多文档标签页 |
+| 项目列表 | `List` / `Card` | 项目卡片网格 |
+| 创建项目 | `Modal` + `Form` | 弹窗表单 |
+| 文档导入 | `Upload.Dragger` | 拖拽上传本地文件 |
+| Git/URL 导入 | `Modal` + `Form` + `Input` | 弹窗输入仓库地址/URL |
+| 对话消息列表 | `List` | 对话历史记录 |
+| 消息气泡 | `Bubble` (Ant Design X) | AI 对话气泡（流式） |
+| 快捷指令 | `Tag` / `Space` | 指令按钮组 |
+| 分析结果 | `Table` / `Descriptions` | 结构化展示提取结果 |
+| 严重性标注 | `Badge` / `Tag` (color) | 高/中/低级别标识 |
+| 设置页 | `Form` / `Select` / `Switch` | API 配置、模型选择 |
+| MKP 状态 | `Badge` (status) + `Descriptions` | 连接状态展示 |
+| 导出报告 | `Dropdown` + `Button` | 下拉选择导出格式 |
+| 加载状态 | `Spin` / `Skeleton` | 文件加载、AI 响应中 |
+| 错误提示 | `message` / `notification` | 全局错误提示 |
+| 确认操作 | `Popconfirm` / `Modal.confirm` | 删除等危险操作确认 |
+| 空状态 | `Empty` | 无项目/无文档/无对话时 |
+| 全局配置 | `ConfigProvider` | 主题、语言等全局设置 |
 
 ## 7. 错误处理
 
