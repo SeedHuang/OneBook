@@ -11,10 +11,14 @@ const { Search } = Input
 export default function ProjectsPage() {
   const navigate = useNavigate()
   const { message, modal } = App.useApp()
-  const { projects, loading, setProjects, setLoading, addProject, removeProject } = useProjectStore()
+  const { projects, loading, setProjects, setLoading, addProject, removeProject, updateProject } = useProjectStore()
   const [createOpen, setCreateOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
+  const [editTarget, setEditTarget] = useState<Project | null>(null)
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
+  const [editName, setEditName] = useState('')
+  const [editDesc, setEditDesc] = useState('')
   const [search, setSearch] = useState('')
 
   useEffect(() => {
@@ -47,6 +51,28 @@ export default function ProjectsPage() {
       message.success('项目创建成功')
     } catch {
       message.error('创建项目失败')
+    }
+  }
+
+  function handleOpenEdit(project: Project) {
+    setEditTarget(project)
+    setEditName(project.name)
+    setEditDesc(project.description)
+    setEditOpen(true)
+  }
+
+  async function handleEdit() {
+    if (!editTarget || !editName.trim()) {
+      message.warning('请输入项目名称')
+      return
+    }
+    try {
+      await window.electronAPI.updateProject(editTarget.id, editName, editDesc)
+      updateProject(editTarget.id, { name: editName, description: editDesc })
+      setEditOpen(false)
+      message.success('项目已更新')
+    } catch {
+      message.error('更新失败')
     }
   }
 
@@ -113,7 +139,7 @@ export default function ProjectsPage() {
                     hoverable
                     onClick={() => navigate(`/project/${project.id}`)}
                     actions={[
-                      <EditOutlined key="edit" onClick={(e) => { e.stopPropagation(); navigate(`/project/${project.id}`) }} />,
+                      <EditOutlined key="edit" onClick={(e) => { e.stopPropagation(); handleOpenEdit(project) }} />,
                       <DeleteOutlined key="delete" style={{ color: '#ff4d4f' }} onClick={(e) => { e.stopPropagation(); handleDelete(project) }} />,
                     ]}
                     styles={{ body: { padding: '16px 20px' } }}
@@ -165,6 +191,35 @@ export default function ProjectsPage() {
               placeholder="简要描述项目内容（可选）"
               value={newDesc}
               onChange={(e) => setNewDesc(e.target.value)}
+              rows={3}
+            />
+          </div>
+        </Space>
+      </Modal>
+
+      {/* 编辑项目弹窗 */}
+      <Modal
+        title="编辑项目"
+        open={editOpen}
+        onOk={handleEdit}
+        onCancel={() => setEditOpen(false)}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div>
+            <Text>项目名称 *</Text>
+            <Input
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              onPressEnter={handleEdit}
+            />
+          </div>
+          <div>
+            <Text>项目描述</Text>
+            <Input.TextArea
+              value={editDesc}
+              onChange={(e) => setEditDesc(e.target.value)}
               rows={3}
             />
           </div>

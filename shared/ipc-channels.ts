@@ -19,6 +19,7 @@ export const IPC = {
   // 对话
   CONVERSATION_LIST: 'conversation:list',
   CONVERSATION_CREATE: 'conversation:create',
+  CONVERSATION_UPDATE: 'conversation:update',
   CONVERSATION_DELETE: 'conversation:delete',
   MESSAGE_LIST: 'message:list',
   MESSAGE_SEND: 'message:send',

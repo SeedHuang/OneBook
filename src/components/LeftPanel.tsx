@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Tree, Button, Upload, Space, Typography, Dropdown, App, Input, Modal } from 'antd'
+import { Tree, Button, Space, Typography, Dropdown, App, Input, Modal } from 'antd'
 import {
   FileTextOutlined,
   PlusOutlined,
@@ -7,12 +7,13 @@ import {
   GithubOutlined,
   LinkOutlined,
   FolderOpenOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { useDocumentStore } from '../stores/documentStore'
+import type { Document } from '../../shared/types'
 
 const { Text } = Typography
-const { Dragger } = Upload
 
 interface LeftPanelProps {
   projectId: string
@@ -20,7 +21,7 @@ interface LeftPanelProps {
 
 export default function LeftPanel({ projectId }: LeftPanelProps) {
   const { message } = App.useApp()
-  const { documents, currentDocument, openDocument, addDocument } = useDocumentStore()
+  const { documents, currentDocument, openDocument, addDocument, removeDocument } = useDocumentStore()
   const [importOpen, setImportOpen] = useState(false)
   const [urlInput, setUrlInput] = useState('')
   const [gitRepo, setGitRepo] = useState('')
@@ -29,7 +30,15 @@ export default function LeftPanel({ projectId }: LeftPanelProps) {
 
   const treeData = documents.map((doc) => ({
     key: doc.id,
-    title: doc.name,
+    title: (
+      <span style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>{doc.name}</span>
+        <DeleteOutlined
+          style={{ color: '#ff4d4f', fontSize: 12, marginLeft: 4, opacity: 0.6 }}
+          onClick={(e) => { e.stopPropagation(); handleDeleteDoc(doc) }}
+        />
+      </span>
+    ),
     icon: <FileTextOutlined />,
     isLeaf: true,
   }))
@@ -40,20 +49,41 @@ export default function LeftPanel({ projectId }: LeftPanelProps) {
     if (doc) openDocument(doc)
   }
 
-  async function handleLocalImport(file: File) {
+  async function handleDeleteDoc(doc: Document) {
+    Modal.confirm({
+      title: '确认删除',
+      content: `确定要删除文档「${doc.name}」吗？`,
+      okText: '删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await window.electronAPI.deleteDocument(doc.id)
+          removeDocument(doc.id)
+          message.success('文档已删除')
+        } catch {
+          message.error('删除失败')
+        }
+      },
+    })
+  }
+
+  async function handleLocalImport() {
     try {
-      const filePath = (file as any).path || file.name
-      const doc = await window.electronAPI.importDocument({
-        project_id: projectId,
-        source: 'local',
-        file_path: filePath,
-      })
-      addDocument(doc)
-      message.success(`已导入: ${doc.name}`)
+      const filePaths = await window.electronAPI.openFileDialog()
+      if (!filePaths || filePaths.length === 0) return
+      for (const filePath of filePaths) {
+        const doc = await window.electronAPI.importDocument({
+          project_id: projectId,
+          source: 'local',
+          file_path: filePath,
+        })
+        addDocument(doc)
+        message.success(`已导入: ${doc.name}`)
+      }
     } catch {
       message.error('导入失败')
     }
-    return false // prevent antd auto upload
   }
 
   async function handleUrlImport() {
@@ -163,17 +193,18 @@ export default function LeftPanel({ projectId }: LeftPanelProps) {
         </div>
 
         {importTab === 'local' && (
-          <Dragger
-            beforeUpload={handleLocalImport}
-            showUploadList={false}
-            accept=".md,.xlsx,.xls"
-            multiple
-            style={{ background: '#1f1f1f', borderColor: '#434343' }}
-          >
-            <p style={{ color: '#89b4fa', fontSize: 32 }}><UploadOutlined /></p>
-            <p>拖拽文件到此处，或点击选择</p>
-            <p style={{ color: '#888', fontSize: 12 }}>支持 .md, .xlsx 格式</p>
-          </Dragger>
+          <div style={{ textAlign: 'center', padding: '24px 0' }}>
+            <Button
+              type="primary"
+              icon={<UploadOutlined />}
+              size="large"
+              onClick={handleLocalImport}
+              block
+            >
+              选择本地文件导入
+            </Button>
+            <p style={{ color: '#888', fontSize: 12, marginTop: 8 }}>支持 .md, .xlsx 格式</p>
+          </div>
         )}
 
         {importTab === 'git' && (

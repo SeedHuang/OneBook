@@ -71,8 +71,16 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.CONVERSATION_CREATE, (_, projectId: string, documentId: string | null, title: string) => {
     return db.createConversation(uuidv4(), projectId, documentId, title)
   })
+  ipcMain.handle(IPC.CONVERSATION_UPDATE, (_, id: string, title: string) => {
+    db.updateConversationTitle(id, title)
+  })
   ipcMain.handle(IPC.CONVERSATION_DELETE, (_, id: string) => db.deleteConversation(id))
   ipcMain.handle(IPC.MESSAGE_LIST, (_, conversationId: string) => db.listMessages(conversationId))
+
+  // ---- 消息持久化 ----
+  ipcMain.handle(IPC.MESSAGE_SEND, (_, params: { conversation_id: string; content: string; role: 'user' | 'assistant' }) => {
+    return db.createMessage(uuidv4(), params.conversation_id, params.role, params.content)
+  })
 
   // ---- AI 流式对话 ----
   ipcMain.handle(IPC.AI_CHAT_STREAM, async (event, params: { messages: { role: string; content: string }[] }) => {

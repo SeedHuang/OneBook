@@ -124,6 +124,10 @@ export function deleteConversation(id: string): void {
   db.prepare('DELETE FROM conversations WHERE id = ?').run(id)
 }
 
+export function updateConversationTitle(id: string, title: string): void {
+  db.prepare('UPDATE conversations SET title = ? WHERE id = ?').run(title, id)
+}
+
 // ---- 消息 ----
 
 export function listMessages(conversationId: string): Message[] {

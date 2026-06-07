@@ -23,8 +23,10 @@ const electronAPI = {
   // 对话
   listConversations: (projectId: string) => ipcRenderer.invoke(IPC.CONVERSATION_LIST, projectId),
   createConversation: (projectId: string, documentId: string | null, title: string) => ipcRenderer.invoke(IPC.CONVERSATION_CREATE, projectId, documentId, title),
+  updateConversationTitle: (id: string, title: string) => ipcRenderer.invoke(IPC.CONVERSATION_UPDATE, id, title),
   deleteConversation: (id: string) => ipcRenderer.invoke(IPC.CONVERSATION_DELETE, id),
   listMessages: (conversationId: string) => ipcRenderer.invoke(IPC.MESSAGE_LIST, conversationId),
+  sendMessage: (params: { conversation_id: string; content: string; role: 'user' | 'assistant' }) => ipcRenderer.invoke(IPC.MESSAGE_SEND, params),
 
   // AI
   startChatStream: (messages: { role: string; content: string }[]) => ipcRenderer.invoke(IPC.AI_CHAT_STREAM, { messages }),

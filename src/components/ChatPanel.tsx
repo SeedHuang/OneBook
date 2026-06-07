@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Input, Button, Space, Typography, Dropdown, Tag, App, Avatar, Spin } from 'antd'
+import { Input, Button, Space, Typography, Dropdown, Tag, App, Avatar, Spin, Select } from 'antd'
 import {
   SendOutlined,
   RobotOutlined,
@@ -34,7 +34,7 @@ const QUICK_ACTIONS: MenuProps['items'] = [
 export default function ChatPanel({ projectId }: ChatPanelProps) {
   const { message: msgApi } = App.useApp()
   const {
-    currentConversation, messages, streaming, streamContent,
+    conversations, currentConversation, messages, streaming, streamContent,
     setCurrentConversation, setMessages, setStreaming,
     setStreamContent, appendStreamContent, addMessage, addConversation,
   } = useChatStore()
@@ -63,6 +63,25 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
       window.electronAPI.removeChatStreamListeners()
     }
   }, [])
+
+  // 加载对话历史消息
+  async function loadHistory(conversationId: string) {
+    try {
+      const msgs = await window.electronAPI.listMessages(conversationId)
+      setMessages(msgs)
+    } catch {
+      setMessages([])
+    }
+  }
+
+  // 切换对话
+  function handleSwitchConversation(convId: string) {
+    const conv = conversations.find((c) => c.id === convId)
+    if (conv) {
+      setCurrentConversation(conv)
+      loadHistory(conv.id)
+    }
+  }
 
   async function handleNewConversation() {
     try {
@@ -99,6 +118,20 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
 
     const activeConv = conv!
 
+    // 自动更新对话标题（首条消息前30字）
+    if (messages.length === 0 && activeConv.title === '新对话') {
+      try {
+        await window.electronAPI.updateConversationTitle(activeConv.id, text.slice(0, 30))
+      } catch { /* ignore */ }
+    }
+
+    // 持久化用户消息
+    try {
+      await window.electronAPI.sendMessage({ conversation_id: activeConv.id, content: text, role: 'user' })
+    } catch {
+      // 持久化失败不阻断 UI
+    }
+
     // Add user message locally
     const userMsg: Message = {
       id: Date.now().toString(),
@@ -130,6 +163,8 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
             content: sc,
             created_at: new Date().toISOString(),
           }
+          // 持久化 AI 回复
+          window.electronAPI.sendMessage({ conversation_id: activeConv!.id, content: sc, role: 'assistant' }).catch(() => {})
           addMessage(assistantMsg)
           setStreamContent('')
         }
@@ -198,6 +233,20 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
           <Button type="text" size="small" icon={<PlusOutlined />} onClick={handleNewConversation} />
         </Space>
       </div>
+
+      {/* 对话切换选择器 */}
+      {conversations.length > 0 && (
+        <div style={{ padding: '4px 12px', borderBottom: '1px solid #252525' }}>
+          <Select
+            size="small"
+            style={{ width: '100%' }}
+            value={currentConversation?.id}
+            onChange={handleSwitchConversation}
+            placeholder="选择对话"
+            options={conversations.map((c) => ({ label: c.title || '未命名对话', value: c.id }))}
+          />
+        </div>
+      )}
 
       {/* 消息列表 */}
       <div style={{ flex: 1, overflow: 'auto', padding: '12px' }}>
