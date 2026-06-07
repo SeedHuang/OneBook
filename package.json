@@ -37,7 +37,7 @@
     "html2canvas": "^1.4.1",
     "jspdf": "^2.5.2",
     "marked": "^15.0.7",
-    "mkp-sdk": "file:D:/fa/mkp-sdk",
+    "mkp-sdk": "^0.1.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "react-resizable-panels": "^2.1.7",
