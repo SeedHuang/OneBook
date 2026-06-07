@@ -12,6 +12,7 @@
       "@/*": ["src/*"],
       "@shared/*": ["shared/*"]
     },
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "types": []
   }
 }

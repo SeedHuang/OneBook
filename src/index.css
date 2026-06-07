@@ -1,0 +1,151 @@
+/* OneBook 全局样式 */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  background: #141414;
+  color: #e0e0e0;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #434343;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #595959;
+}
+
+/* Markdown 渲染样式 */
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #e0e0e0;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin-top: 24px;
+  margin-bottom: 12px;
+  font-weight: 600;
+  color: #f0f0f0;
+}
+
+.markdown-body h1 { font-size: 28px; border-bottom: 1px solid #303030; padding-bottom: 8px; }
+.markdown-body h2 { font-size: 22px; border-bottom: 1px solid #303030; padding-bottom: 6px; }
+.markdown-body h3 { font-size: 18px; }
+
+.markdown-body p {
+  margin-bottom: 12px;
+}
+
+.markdown-body code {
+  background: #2a2a2a;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #f0a0a0;
+}
+
+.markdown-body pre {
+  background: #1e1e2e;
+  padding: 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin-bottom: 16px;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  color: #cdd6f4;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 24px;
+  margin-bottom: 12px;
+}
+
+.markdown-body li {
+  margin-bottom: 4px;
+}
+
+.markdown-body blockquote {
+  border-left: 3px solid #89b4fa;
+  padding-left: 16px;
+  margin: 12px 0;
+  color: #aaa;
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 16px;
+}
+
+.markdown-body table th,
+.markdown-body table td {
+  border: 1px solid #303030;
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.markdown-body table th {
+  background: #1f1f1f;
+  font-weight: 600;
+}
+
+.markdown-body table tr:nth-child(even) {
+  background: #1a1a1a;
+}
+
+.markdown-body a {
+  color: #89b4fa;
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid #303030;
+  margin: 24px 0;
+}
+
+.markdown-body img {
+  max-width: 100%;
+  border-radius: 8px;
+}
+
+/* Ant Design 暗色覆盖 */
+.ant-layout {
+  background: #141414 !important;
+}
+
+/* react-resizable-panels handle hover */
+[data-panel-resize-handle-id]:hover {
+  background: #89b4fa !important;
+}
