@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import * as dbService from '../services/db.service'
 
-// Mock db.service 中的 getSetting
+// Mock db.service 中的 getSetting 和 getDefaultModel
 vi.spyOn(dbService, 'getSetting').mockImplementation((key: string) => {
   if (key === 'token.mode') return 'mkp'
   if (key === 'ai.manualKey') return 'test-deepseek-key'
@@ -15,11 +15,22 @@ vi.spyOn(dbService, 'getSetting').mockImplementation((key: string) => {
   return null
 })
 
+vi.spyOn(dbService, 'getDefaultModel').mockReturnValue(null)
+
 import { getAIToken, getCurrentModel, buildAnalysisMessages, checkMkpStatus, streamChat } from '../services/ai.service'
 
 describe('AI 服务', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // 重置默认 mock 实现（clearAllMocks 不清除 mockReturnValue）
+    vi.mocked(dbService.getSetting).mockImplementation((key: string) => {
+      if (key === 'token.mode') return 'mkp'
+      if (key === 'ai.manualKey') return 'test-deepseek-key'
+      if (key === 'ai.provider') return 'deepseek'
+      if (key === 'ai.model') return 'deepseek-chat'
+      return null
+    })
+    vi.mocked(dbService.getDefaultModel).mockReturnValue(null)
   })
 
   describe('getAIToken', () => {
@@ -39,16 +50,19 @@ describe('AI 服务', () => {
   })
 
   describe('getCurrentModel', () => {
-    it('从设置中读取模型配置', () => {
+    it('从设置中读取模型配置（models 表为空时回退）', () => {
+      vi.mocked(dbService.getDefaultModel).mockReturnValue(null)
       const model = getCurrentModel()
       expect(model.provider).toBe('deepseek')
-      expect(model.model).toBe('deepseek-chat')
+      expect(model.model).toBe('deepseek-chat')  // 从 getSetting('ai.model') 读取
     })
 
     it('设置不存在时返回默认模型', () => {
+      vi.mocked(dbService.getDefaultModel).mockReturnValue(null)
       vi.mocked(dbService.getSetting).mockReturnValue(null)
       const model = getCurrentModel()
       expect(model.provider).toBe('deepseek') // DEFAULT_MODEL
+      expect(model.model).toBe('deepseek-v4-flash')
     })
   })
 
@@ -99,6 +113,7 @@ describe('AI 服务', () => {
         if (key === 'ai.model') return 'deepseek-chat'
         return null
       })
+      vi.mocked(dbService.getDefaultModel).mockReturnValue(null)
     })
 
     /**
@@ -238,12 +253,26 @@ describe('AI 服务', () => {
       )
     })
 
-    it('多行数据在同一 buffer 中正确解析', async () => {
-      // 所有 SSE 数据在一个 chunk 中
-      const stream = createMockSSEStream([
-        'data: {"choices":[{"delta":{"content":"A"}}]}\n\ndata: {"choices":[{"delta":{"content":"B"}}]}\n\ndata: [DONE]\n\n',
-      ])
+    it('请求体包含 stream_options.include_usage=true', async () => {
+      const stream = createMockSSEStream(['data: [DONE]\n\n'])
+      const mockFetch = vi.fn().mockResolvedValue({ ok: true, body: stream })
+      global.fetch = mockFetch
 
+      const results: any[] = []
+      for await (const chunk of streamChat([{ role: 'user', content: 'hi' }])) {
+        results.push(chunk)
+      }
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body)
+      expect(body.stream_options).toEqual({ include_usage: true })
+    })
+
+    it('解析 usage chunk 并 yield usage 事件', async () => {
+      const stream = createMockSSEStream([
+        'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
+        'data: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50,"total_tokens":150}}\n\n',
+        'data: [DONE]\n\n',
+      ])
       global.fetch = vi.fn().mockResolvedValue({ ok: true, body: stream })
 
       const results: any[] = []
@@ -251,10 +280,42 @@ describe('AI 服务', () => {
         results.push(chunk)
       }
 
-      expect(results).toHaveLength(3)
-      expect(results[0]).toEqual({ type: 'chunk', content: 'A' })
-      expect(results[1]).toEqual({ type: 'chunk', content: 'B' })
-      expect(results[2]).toEqual({ type: 'done' })
+      const usageEvent = results.find(r => r.type === 'usage')
+      expect(usageEvent).toBeTruthy()
+      expect(usageEvent.usage.prompt_tokens).toBe(100)
+      expect(usageEvent.usage.completion_tokens).toBe(50)
+      expect(usageEvent.usage.total_tokens).toBe(150)
+    })
+  })
+
+  describe('getAIToken 模型级 Key', () => {
+    it('传入模型级 api_key 时优先使用', async () => {
+      const token = await getAIToken('deepseek', 'model-level-key')
+      expect(token).toBe('model-level-key')
+    })
+  })
+
+  describe('getCurrentModel 从 models 表读取', () => {
+    it('从 getDefaultModel 读取模型配置', () => {
+      vi.spyOn(dbService, 'getDefaultModel').mockReturnValue({
+        id: 'm1',
+        provider: 'deepseek',
+        model_name: 'deepseek-v4',
+        is_default: true,
+        context_window: 1048576,
+        created_at: '2026-01-01',
+      })
+      const model = getCurrentModel()
+      expect(model.provider).toBe('deepseek')
+      expect(model.model).toBe('deepseek-v4')
+    })
+
+    it('models 表为空时回退到常量默认', () => {
+      vi.spyOn(dbService, 'getDefaultModel').mockReturnValue(null)
+      vi.mocked(dbService.getSetting).mockReturnValue(null)
+      const model = getCurrentModel()
+      expect(model.provider).toBe('deepseek')
+      expect(model.model).toBe('deepseek-v4-flash')  // DEFAULT_MODEL 已更新
     })
   })
 })

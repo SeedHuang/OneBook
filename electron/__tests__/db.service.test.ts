@@ -26,6 +26,13 @@ import {
   getSetting,
   setSetting,
   getAllSettings,
+  listModels,
+  createModel,
+  updateModel,
+  deleteModel,
+  setDefaultModel,
+  getDefaultModel,
+  addConversationTokens,
 } from '../services/db.service'
 
 describe('数据库服务', () => {
@@ -264,6 +271,97 @@ describe('数据库服务', () => {
       setSetting('k2', 'v2')
       const all = getAllSettings()
       expect(all).toEqual({ k1: 'v1', k2: 'v2' })
+    })
+  })
+
+  describe('模型管理', () => {
+    it('初始化时应预填默认模型', () => {
+      const models = listModels()
+      expect(models.length).toBeGreaterThanOrEqual(2)
+      const flashModel = models.find(m => m.model_name === 'deepseek-v4-flash')
+      const proModel = models.find(m => m.model_name === 'deepseek-v4-pro')
+      expect(flashModel).toBeTruthy()
+      expect(flashModel?.is_default).toBe(true)
+      expect(flashModel?.context_window).toBe(1048576)
+      expect(proModel).toBeTruthy()
+      expect(proModel?.is_default).toBe(false)
+    })
+
+    it('createModel 创建新模型', () => {
+      const model = createModel({
+        provider: 'deepseek',
+        model_name: 'deepseek-v4-pro',
+        context_window: 1048576,
+      })
+      expect(model.id).toBeTruthy()
+      expect(model.model_name).toBe('deepseek-v4-pro')
+      expect(model.context_window).toBe(1048576)
+      expect(model.is_default).toBe(false)
+    })
+
+    it('createModel 未知模型名使用默认 context_window', () => {
+      const model = createModel({
+        provider: 'deepseek',
+        model_name: 'custom-model',
+      })
+      expect(model.context_window).toBe(131072)
+    })
+
+    it('createModel 已知模型名自动填充 context_window', () => {
+      const model = createModel({
+        provider: 'deepseek',
+        model_name: 'deepseek-chat',
+      })
+      expect(model.context_window).toBe(65536)
+    })
+
+    it('setDefaultModel 切换默认模型', () => {
+      const flash = createModel({ provider: 'deepseek', model_name: 'my-flash' })
+      setDefaultModel(flash.id)
+      const models = listModels()
+      expect(models.find(m => m.id === flash.id)?.is_default).toBe(true)
+      expect(models.find(m => m.model_name === 'deepseek-v4-flash')?.is_default).toBe(false)
+    })
+
+    it('updateModel 更新模型属性', () => {
+      const model = createModel({ provider: 'deepseek', model_name: 'test-update' })
+      const updated = updateModel(model.id, { api_base_url: 'https://custom.api.com' })
+      expect(updated.api_base_url).toBe('https://custom.api.com')
+    })
+
+    it('deleteModel 删除非默认模型', () => {
+      const model = createModel({ provider: 'deepseek', model_name: 'to-delete' })
+      deleteModel(model.id)
+      const models = listModels()
+      expect(models.find(m => m.id === model.id)).toBeUndefined()
+    })
+
+    it('deleteModel 不允许删除默认模型', () => {
+      const defaults = listModels().filter(m => m.is_default)
+      expect(() => deleteModel(defaults[0].id)).toThrow('不能删除默认模型')
+    })
+
+    it('getDefaultModel 返回 is_default=true 的模型', () => {
+      const def = getDefaultModel()
+      expect(def).toBeTruthy()
+      expect(def?.is_default).toBe(true)
+    })
+  })
+
+  describe('对话 Token 追踪', () => {
+    it('创建对话时 total_tokens 默认为 0', () => {
+      createProject('p1', '项目', '')
+      const conv = createConversation('c1', 'p1', null, '测试对话')
+      expect(conv.total_tokens).toBe(0)
+    })
+
+    it('addConversationTokens 累加 token 数', () => {
+      createProject('p1', '项目', '')
+      const conv = createConversation('c1', 'p1', null, '测试对话')
+      addConversationTokens(conv.id, 1500)
+      addConversationTokens(conv.id, 800)
+      const updated = listConversations('p1').find(c => c.id === conv.id)
+      expect(updated?.total_tokens).toBe(2300)
     })
   })
 })

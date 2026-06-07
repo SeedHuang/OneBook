@@ -5,8 +5,10 @@
  */
 import Database from 'better-sqlite3'
 import { app } from 'electron'
+import { randomUUID } from 'crypto'
 import path from 'path'
-import type { Project, Document, Conversation, Message, Analysis } from '../../shared/types'
+import type { Project, Document, Conversation, Message, Analysis, AIModel, CreateModelParams } from '../../shared/types'
+import { KNOWN_CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW } from '../../shared/constants'
 import { createLogger } from '../utils/logger'
 
 const log = createLogger('db')
@@ -64,6 +66,16 @@ export function initDatabase(): void {
       key TEXT PRIMARY KEY,
       value TEXT
     );
+    CREATE TABLE IF NOT EXISTS models (
+      id TEXT PRIMARY KEY,
+      provider TEXT NOT NULL CHECK(provider IN ('deepseek', 'openai')),
+      model_name TEXT NOT NULL UNIQUE,
+      api_base_url TEXT,
+      api_key TEXT,
+      is_default INTEGER NOT NULL DEFAULT 0,
+      context_window INTEGER NOT NULL DEFAULT 131072,
+      created_at TEXT NOT NULL
+    );
   `)
 
   // 迁移: 旧版 documents 表 CHECK 约束不含 'html'，需重建
@@ -110,6 +122,32 @@ export function initDatabase(): void {
   }
 
   log.info('数据库表结构已就绪')
+
+  // 迁移: models 表预填默认记录
+  try {
+    const anyModel = db.prepare('SELECT id FROM models LIMIT 1').get() as { id: string } | undefined
+    if (!anyModel) {
+      const now = new Date().toISOString()
+      db.prepare('INSERT INTO models (id, provider, model_name, is_default, context_window, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(randomUUID(), 'deepseek', 'deepseek-v4-flash', 1, 1048576, now)
+      db.prepare('INSERT INTO models (id, provider, model_name, is_default, context_window, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(randomUUID(), 'deepseek', 'deepseek-v4-pro', 0, 1048576, now)
+      log.info('预填默认模型: deepseek-v4-flash, deepseek-v4-pro')
+    }
+  } catch (err) {
+    log.warn('models 表预填跳过:', err instanceof Error ? err.message : String(err))
+  }
+
+  // 迁移: conversations 表添加 total_tokens 列
+  try {
+    const cols = db.pragma("table_info('conversations')", { simple: false }) as Array<{ name: string }>
+    if (Array.isArray(cols) && !cols.some(c => c.name === 'total_tokens')) {
+      db.exec("ALTER TABLE conversations ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0")
+      log.info('迁移 conversations 表: 添加 total_tokens 列')
+    }
+  } catch (err) {
+    log.warn('conversations 迁移跳过:', err instanceof Error ? err.message : String(err))
+  }
 }
 
 /** 关闭数据库 */
@@ -179,9 +217,9 @@ export function listConversations(projectId: string): Conversation[] {
 
 export function createConversation(id: string, projectId: string, documentId: string | null, title: string): Conversation {
   const now = new Date().toISOString()
-  db.prepare('INSERT INTO conversations (id, project_id, document_id, title, created_at) VALUES (?, ?, ?, ?, ?)').run(id, projectId, documentId, title, now)
+  db.prepare('INSERT INTO conversations (id, project_id, document_id, title, total_tokens, created_at) VALUES (?, ?, ?, ?, 0, ?)').run(id, projectId, documentId, title, now)
   log.info('创建对话:', title, `(${id})`)
-  return { id, project_id: projectId, document_id: documentId, title, created_at: now }
+  return { id, project_id: projectId, document_id: documentId, title, total_tokens: 0, created_at: now }
 }
 
 export function deleteConversation(id: string): void {
@@ -259,4 +297,71 @@ export function setSetting(key: string, value: string): void {
 export function getAllSettings(): Record<string, string> {
   const rows = db.prepare('SELECT * FROM settings').all() as { key: string; value: string }[]
   return Object.fromEntries(rows.map(r => [r.key, r.value]))
+}
+
+// ---- 模型管理 ----
+
+function rowToModel(row: Record<string, unknown>): AIModel {
+  return {
+    id: row.id as string,
+    provider: row.provider as 'deepseek' | 'openai',
+    model_name: row.model_name as string,
+    api_base_url: (row.api_base_url as string) || undefined,
+    api_key: (row.api_key as string) || undefined,
+    is_default: !!(row.is_default as number),
+    context_window: row.context_window as number,
+    created_at: row.created_at as string,
+  }
+}
+
+export function listModels(): AIModel[] {
+  const rows = db.prepare('SELECT * FROM models ORDER BY is_default DESC, created_at ASC').all() as Record<string, unknown>[]
+  return rows.map(rowToModel)
+}
+
+export function createModel(params: CreateModelParams): AIModel {
+  const id = randomUUID()
+  const now = new Date().toISOString()
+  const ctx = params.context_window ?? KNOWN_CONTEXT_WINDOWS[params.model_name] ?? DEFAULT_CONTEXT_WINDOW
+  db.prepare(
+    'INSERT INTO models (id, provider, model_name, api_base_url, api_key, is_default, context_window, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(id, params.provider, params.model_name, params.api_base_url || null, params.api_key || null, 0, ctx, now)
+  return rowToModel(db.prepare('SELECT * FROM models WHERE id = ?').get(id) as Record<string, unknown>)
+}
+
+export function updateModel(id: string, params: Partial<CreateModelParams>): AIModel {
+  const fields: string[] = []
+  const values: unknown[] = []
+  if (params.provider !== undefined) { fields.push('provider = ?'); values.push(params.provider) }
+  if (params.model_name !== undefined) { fields.push('model_name = ?'); values.push(params.model_name) }
+  if (params.api_base_url !== undefined) { fields.push('api_base_url = ?'); values.push(params.api_base_url || null) }
+  if (params.api_key !== undefined) { fields.push('api_key = ?'); values.push(params.api_key || null) }
+  if (params.context_window !== undefined) { fields.push('context_window = ?'); values.push(params.context_window) }
+  if (fields.length === 0) throw new Error('无更新字段')
+  values.push(id)
+  db.prepare(`UPDATE models SET ${fields.join(', ')} WHERE id = ?`).run(...values)
+  return rowToModel(db.prepare('SELECT * FROM models WHERE id = ?').get(id) as Record<string, unknown>)
+}
+
+export function deleteModel(id: string): void {
+  const model = db.prepare('SELECT * FROM models WHERE id = ?').get(id) as Record<string, unknown> | undefined
+  if (!model) throw new Error('模型不存在')
+  if (model.is_default) throw new Error('不能删除默认模型')
+  db.prepare('DELETE FROM models WHERE id = ?').run(id)
+}
+
+export function setDefaultModel(id: string): void {
+  db.prepare('UPDATE models SET is_default = 0').run()
+  db.prepare('UPDATE models SET is_default = 1 WHERE id = ?').run(id)
+}
+
+export function getDefaultModel(): AIModel | null {
+  const row = db.prepare('SELECT * FROM models WHERE is_default = 1 LIMIT 1').get() as Record<string, unknown> | undefined
+  return row ? rowToModel(row) : null
+}
+
+// ---- Token 追踪 ----
+
+export function addConversationTokens(conversationId: string, tokens: number): void {
+  db.prepare('UPDATE conversations SET total_tokens = total_tokens + ? WHERE id = ?').run(tokens, conversationId)
 }
