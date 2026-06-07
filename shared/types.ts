@@ -31,6 +31,7 @@ export interface Conversation {
   project_id: string
   document_id: string | null
   title: string
+  total_tokens: number
   created_at: string
 }
 
@@ -71,9 +72,35 @@ export type Severity = 'high' | 'medium' | 'low'
 
 /** AI 流式响应 chunk */
 export interface AIStreamChunk {
-  type: 'chunk' | 'done' | 'error'
+  type: 'chunk' | 'done' | 'error' | 'usage'
   content?: string
   error?: string
+  usage?: {
+    prompt_tokens: number
+    completion_tokens: number
+    total_tokens: number
+  }
+}
+
+/** 用户自定义 AI 模型配置 */
+export interface AIModel {
+  id: string
+  provider: AIProvider
+  model_name: string
+  api_base_url?: string
+  api_key?: string
+  is_default: boolean
+  context_window: number
+  created_at: string
+}
+
+/** 创建模型参数 */
+export interface CreateModelParams {
+  provider: AIProvider
+  model_name: string
+  api_base_url?: string
+  api_key?: string
+  context_window?: number
 }
 
 /** 创建项目参数 */

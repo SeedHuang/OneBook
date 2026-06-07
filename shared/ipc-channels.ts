@@ -30,12 +30,21 @@ export const IPC = {
   AI_CHAT_STREAM_CHUNK: 'ai:chat:stream:chunk',
   AI_CHAT_STREAM_DONE: 'ai:chat:stream:done',
   AI_CHAT_STREAM_ERROR: 'ai:chat:stream:error',
+  AI_CHAT_STREAM_USAGE: 'ai:chat:stream:usage',
   AI_ANALYZE: 'ai:analyze',
 
   // 设置
   SETTINGS_GET: 'settings:get',
   SETTINGS_SET: 'settings:set',
   SETTINGS_GET_ALL: 'settings:get-all',
+
+  // 模型管理
+  MODEL_LIST: 'model:list',
+  MODEL_CREATE: 'model:create',
+  MODEL_UPDATE: 'model:update',
+  MODEL_DELETE: 'model:delete',
+  MODEL_SET_DEFAULT: 'model:set-default',
+  MODEL_TEST: 'model:test',
 
   // MKP
   MKP_STATUS: 'mkp:status',

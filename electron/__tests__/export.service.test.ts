@@ -259,7 +259,7 @@ describe('导出服务', () => {
       expect(feAoa).toBeDefined()
     })
 
-    it('没有实现端列的表格作为额外Sheet导出', async () => {
+    it('没有实现端列且标题无法推断归属的表格被跳过', async () => {
       vi.mocked(dialog.showSaveDialog).mockResolvedValue({
         filePath: '/tmp/report.xlsx',
         canceled: false,
@@ -272,8 +272,89 @@ describe('导出服务', () => {
       const XLSX = await import('xlsx')
       const appendCalls = vi.mocked(XLSX.utils.book_append_sheet).mock.calls
       const sheetNames = appendCalls.map((c: any) => c[2])
-      // 汇总表应作为额外 Sheet 导出
-      expect(sheetNames).toContain('工时汇总')
+      // 没有实现端列且标题无法推断归属的表格应被跳过，只输出提示 sheet
+      expect(sheetNames).not.toContain('工时汇总')
+      expect(sheetNames).toContain('提示')
+    })
+
+    it('无实现端列时通过标题 emoji/关键词推断归属（generate.md 格式）', async () => {
+      vi.mocked(dialog.showSaveDialog).mockResolvedValue({
+        filePath: '/tmp/report.xlsx',
+        canceled: false,
+      } as any)
+
+      // 模拟 generate.md 实际输出格式：按分组标题分表格，表格内无“实现端”列
+      const content = [
+        '## 一、功能点级任务明细',
+        '',
+        '**🟢 前端任务：**',
+        '',
+        '| 任务ID | 所属组件/页面 | 任务名称 | 复杂度 | 预估工时(小时) |',
+        '| --- | --- | --- | --- | --- |',
+        '| FE-001 | 首页 | 布局开发 | M | 8 |',
+        '| FE-002 | 列表页 | CRUD开发 | L | 16 |',
+        '',
+        '**🔵 后端任务：**',
+        '',
+        '| 任务ID | 所属组件/页面 | 任务名称 | 复杂度 | 预估工时(小时) |',
+        '| --- | --- | --- | --- | --- |',
+        '| BE-001 | 用户接口 | CRUD接口 | M | 8 |',
+        '',
+        '**🟣 联调任务：**',
+        '',
+        '| 任务ID | 所属组件/页面 | 任务名称 | 复杂度 | 预估工时(小时) |',
+        '| --- | --- | --- | --- | --- |',
+        '| INT-001 | 首页 | 接口联调 | S | 4 |',
+      ].join('\n')
+
+      await exportExcel(content, 'report')
+
+      const XLSX = await import('xlsx')
+      const appendCalls = vi.mocked(XLSX.utils.book_append_sheet).mock.calls
+      const sheetNames = appendCalls.map((c: any) => c[2])
+      // 应正确识别三个分组
+      expect(sheetNames).toContain('前端任务')
+      expect(sheetNames).toContain('后端任务')
+      expect(sheetNames).toContain('联调任务')
+      // 不应输出提示 sheet
+      expect(sheetNames).not.toContain('提示')
+
+      // 前端 Sheet 应包含 2 行数据（表头 + 2行 = 3行）
+      const aoaCalls = vi.mocked(XLSX.utils.aoa_to_sheet).mock.calls
+      const feAoa = aoaCalls.find((c: any) => {
+        const rows = c[0] as string[][]
+        return rows.length === 3 && rows[1][0] === 'FE-001' && rows[2][0] === 'FE-002'
+      })
+      expect(feAoa).toBeDefined()
+    })
+
+    it('无实现端列时通过 ### 标题推断归属', async () => {
+      vi.mocked(dialog.showSaveDialog).mockResolvedValue({
+        filePath: '/tmp/report.xlsx',
+        canceled: false,
+      } as any)
+
+      const content = [
+        '### 🟢 前端任务',
+        '',
+        '| 任务ID | 任务名称 | 工时 |',
+        '| --- | --- | --- |',
+        '| FE-001 | 页面开发 | 8 |',
+        '',
+        '### 🔵 后端任务',
+        '',
+        '| 任务ID | 任务名称 | 工时 |',
+        '| --- | --- | --- |',
+        '| BE-001 | 接口开发 | 12 |',
+      ].join('\n')
+
+      await exportExcel(content, 'report')
+
+      const XLSX = await import('xlsx')
+      const appendCalls = vi.mocked(XLSX.utils.book_append_sheet).mock.calls
+      const sheetNames = appendCalls.map((c: any) => c[2])
+      expect(sheetNames).toContain('前端任务')
+      expect(sheetNames).toContain('后端任务')
     })
 
     it('通过任务ID前缀辅助分类（FE-/BE-/INT-）', async () => {

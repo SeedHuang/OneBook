@@ -11,7 +11,7 @@ import * as db from '../services/db.service'
 import * as fileService from '../services/file.service'
 import * as aiService from '../services/ai.service'
 import { createLogger, listLogFiles, readLogFile, clearAllLogs } from '../utils/logger'
-import type { CreateProjectParams, ImportDocumentParams } from '../../shared/types'
+import type { CreateProjectParams, ImportDocumentParams, CreateModelParams } from '../../shared/types'
 
 const log = createLogger('ipc')
 
@@ -156,6 +156,9 @@ export function registerIpcHandlers(): void {
         } else if (chunk.type === 'error') {
           win.webContents.send(IPC.AI_CHAT_STREAM_ERROR, chunk.error)
           log.error('AI 流式对话错误:', chunk.error)
+        } else if (chunk.type === 'usage' && chunk.usage) {
+          win.webContents.send(IPC.AI_CHAT_STREAM_USAGE, chunk.usage)
+          log.info('AI token usage:', chunk.usage)
         }
       }
     } catch (err) {
@@ -249,6 +252,46 @@ export function registerIpcHandlers(): void {
     const result = clearAllLogs()
     log.info('日志清除完成:', result.deleted, '个文件已删除')
     return result
+  })
+
+  // ---- 模型管理 ----
+  ipcMain.handle(IPC.MODEL_LIST, () => {
+    log.debug('IPC: model:list')
+    return db.listModels()
+  })
+  ipcMain.handle(IPC.MODEL_CREATE, (_, params: CreateModelParams) => {
+    log.info('IPC: model:create', params.model_name)
+    return db.createModel(params)
+  })
+  ipcMain.handle(IPC.MODEL_UPDATE, (_, id: string, params: Partial<CreateModelParams>) => {
+    log.info('IPC: model:update', id)
+    return db.updateModel(id, params)
+  })
+  ipcMain.handle(IPC.MODEL_DELETE, (_, id: string) => {
+    log.info('IPC: model:delete', id)
+    return db.deleteModel(id)
+  })
+  ipcMain.handle(IPC.MODEL_SET_DEFAULT, (_, id: string) => {
+    log.info('IPC: model:set-default', id)
+    return db.setDefaultModel(id)
+  })
+  ipcMain.handle(IPC.MODEL_TEST, async (_, id: string) => {
+    log.info('IPC: model:test', id)
+    const model = db.listModels().find(m => m.id === id)
+    if (!model) throw new Error('模型不存在')
+    try {
+      const token = model.api_key || await aiService.getAIToken(model.provider)
+      const url = model.api_base_url || `https://api.${model.provider}.com/v1/chat/completions`
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ model: model.model_name, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1 }),
+      })
+      if (!res.ok) throw new Error(`API 返回 ${res.status}`)
+      return { success: true }
+    } catch (err) {
+      throw new Error(err instanceof Error ? err.message : String(err))
+    }
   })
 
   log.info('所有 IPC 处理器注册完成')

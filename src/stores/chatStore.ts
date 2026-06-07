@@ -17,6 +17,7 @@ interface ChatStore {
   addConversation: (conv: Conversation) => void
   removeConversation: (id: string) => void
   removeMessages: (ids: string[]) => void
+  updateConversationTokens: (id: string, totalTokens: number) => void
 }
 
 export const useChatStore = create<ChatStore>((set) => ({
@@ -40,5 +41,13 @@ export const useChatStore = create<ChatStore>((set) => ({
   })),
   removeMessages: (ids) => set((state) => ({
     messages: state.messages.filter((m) => !ids.includes(m.id)),
+  })),
+  updateConversationTokens: (id, totalTokens) => set((state) => ({
+    conversations: state.conversations.map((c) =>
+      c.id === id ? { ...c, total_tokens: totalTokens } : c
+    ),
+    currentConversation: state.currentConversation?.id === id
+      ? { ...state.currentConversation, total_tokens: totalTokens }
+      : state.currentConversation,
   })),
 }))

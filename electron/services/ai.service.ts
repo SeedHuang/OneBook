@@ -6,7 +6,7 @@
 import { getToken, listServices } from 'mkp-sdk'
 import type { SDKCallbacks } from 'mkp-sdk'
 import type { AIProvider, AIModelConfig, AIStreamChunk, AnalysisType } from '../../shared/types'
-import { getSetting } from './db.service'
+import { getSetting, getDefaultModel } from './db.service'
 import { DEFAULT_MODEL } from '../../shared/constants'
 import { createLogger } from '../utils/logger'
 import systemPrompt from '../../src/prompts/system.md?raw'
@@ -17,13 +17,19 @@ import generatePrompt from '../../src/prompts/generate.md?raw'
 const log = createLogger('ai')
 
 /** API 基础 URL */
-const API_URLS: Record<AIProvider, string> = {
+export const API_URLS: Record<AIProvider, string> = {
   deepseek: 'https://api.deepseek.com/v1/chat/completions',
   openai: 'https://api.openai.com/v1/chat/completions',
 }
 
 /** 获取 AI Token（根据 token.mode 决定策略） */
-export async function getAIToken(provider: AIProvider): Promise<string> {
+export async function getAIToken(provider: AIProvider, modelApiKey?: string): Promise<string> {
+  // 1. 模型级 API Key 优先
+  if (modelApiKey) {
+    log.info(`使用模型级 API Key`)
+    return modelApiKey
+  }
+
   const tokenMode = getSetting('token.mode') || 'mkp'
 
   if (tokenMode === 'manual') {
@@ -91,12 +97,19 @@ export async function checkMkpStatus(): Promise<{ available: boolean; services: 
   }
 }
 
-/** 获取当前选中的模型配置 */
+/** 获取当前选中的模型配置（优先从 models 表读取） */
 export function getCurrentModel(): AIModelConfig {
+  // 优先从 models 表读取默认模型
+  const dbModel = getDefaultModel()
+  if (dbModel) {
+    log.debug('使用 models 表默认模型:', dbModel.model_name)
+    return { provider: dbModel.provider, model: dbModel.model_name }
+  }
+  // 兼容旧逻辑：从 settings 读取
   const providerStr = getSetting('ai.provider')
   const modelStr = getSetting('ai.model')
   if (providerStr && modelStr) {
-    log.debug('使用自定义模型:', providerStr, modelStr)
+    log.debug('使用设置中的模型:', providerStr, modelStr)
     return { provider: providerStr as AIProvider, model: modelStr }
   }
   log.debug('使用默认模型:', DEFAULT_MODEL.provider, DEFAULT_MODEL.model)
@@ -130,6 +143,7 @@ export async function* streamChat(
       model: config.model,
       messages,
       stream: true,
+      stream_options: { include_usage: true },
     }),
   })
 
@@ -172,6 +186,17 @@ export async function* streamChat(
         }
         try {
           const parsed = JSON.parse(data)
+          // 检查 usage 信息
+          if (parsed.usage) {
+            yield {
+              type: 'usage' as const,
+              usage: {
+                prompt_tokens: parsed.usage.prompt_tokens,
+                completion_tokens: parsed.usage.completion_tokens,
+                total_tokens: parsed.usage.total_tokens,
+              },
+            }
+          }
           const content = parsed.choices?.[0]?.delta?.content
           if (content) {
             yield { type: 'chunk', content }

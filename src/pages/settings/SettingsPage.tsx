@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Select, Input, Button, Space, Typography, Tag, App, Radio, Modal, List } from 'antd'
-import { ArrowLeftOutlined, CheckCircleOutlined, CloseCircleOutlined, ApiOutlined, DeleteOutlined, FileTextOutlined, ReloadOutlined } from '@ant-design/icons'
+import { Card, Select, Input, Button, Space, Typography, Tag, App, Radio, Modal, List, Table, InputNumber, Popconfirm, Tooltip } from 'antd'
+import { ArrowLeftOutlined, CheckCircleOutlined, CloseCircleOutlined, ApiOutlined, DeleteOutlined, FileTextOutlined, ReloadOutlined, StarOutlined, StarFilled, PlusOutlined, EditOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import type { ColumnsType } from 'antd/es/table'
 import { useSettingsStore } from '../../stores/settingsStore'
-import type { AIProvider } from '../../../shared/types'
+import type { AIModel, AIProvider, CreateModelParams } from '../../../shared/types'
+import { KNOWN_CONTEXT_WINDOWS, DEFAULT_CONTEXT_WINDOW } from '../../../shared/constants'
 
 const { Title, Text } = Typography
 
@@ -11,8 +13,9 @@ export default function SettingsPage() {
   const navigate = useNavigate()
   const { message } = App.useApp()
   const {
-    provider, model, tokenMode, manualKey, mkpPassword, mkpConnected,
-    setProvider, setModel, setTokenMode, setManualKey, setMkpPassword, setMkpConnected, loadSettings,
+    tokenMode, manualKey, mkpPassword, mkpConnected,
+    setTokenMode, setManualKey, setMkpPassword, setMkpConnected, loadSettings,
+    models, currentModel, loadModels, createModel, updateModel, deleteModel, setDefaultModel, testModel,
   } = useSettingsStore()
   const [saving, setSaving] = useState(false)
   const [logFiles, setLogFiles] = useState<string[]>([])
@@ -21,15 +24,25 @@ export default function SettingsPage() {
   const [logViewTitle, setLogViewTitle] = useState('')
   const [clearing, setClearing] = useState(false)
 
+  // 模型编辑弹窗
+  const [modelModalOpen, setModelModalOpen] = useState(false)
+  const [editingModel, setEditingModel] = useState<AIModel | null>(null)
+  const [formProvider, setFormProvider] = useState<AIProvider>('deepseek')
+  const [formModelName, setFormModelName] = useState('')
+  const [formApiBase, setFormApiBase] = useState('')
+  const [formApiKey, setFormApiKey] = useState('')
+  const [formContextWindow, setFormContextWindow] = useState<number>(DEFAULT_CONTEXT_WINDOW)
+  const [formLoading, setFormLoading] = useState(false)
+  const [testingId, setTestingId] = useState<string | null>(null)
+
   useEffect(() => {
     loadSettings()
+    loadModels()
   }, [])
 
   async function handleSave() {
     setSaving(true)
     try {
-      await window.electronAPI.setSetting('ai.provider', provider)
-      await window.electronAPI.setSetting('ai.model', model)
       await window.electronAPI.setSetting('token.mode', tokenMode)
       if (tokenMode === 'manual') {
         await window.electronAPI.setSetting('ai.manualKey', manualKey)
@@ -59,6 +72,171 @@ export default function SettingsPage() {
       message.error('MKP 状态检查失败')
     }
   }
+
+  // ---- 模型管理 ----
+
+  function openAddModal() {
+    setEditingModel(null)
+    setFormProvider('deepseek')
+    setFormModelName('')
+    setFormApiBase('')
+    setFormApiKey('')
+    setFormContextWindow(DEFAULT_CONTEXT_WINDOW)
+    setModelModalOpen(true)
+  }
+
+  function openEditModal(model: AIModel) {
+    setEditingModel(model)
+    setFormProvider(model.provider)
+    setFormModelName(model.model_name)
+    setFormApiBase(model.api_base_url || '')
+    setFormApiKey(model.api_key || '')
+    setFormContextWindow(model.context_window)
+    setModelModalOpen(true)
+  }
+
+  function handleModelNameChange(name: string) {
+    setFormModelName(name)
+    // 自动填充 context_window
+    if (KNOWN_CONTEXT_WINDOWS[name]) {
+      setFormContextWindow(KNOWN_CONTEXT_WINDOWS[name])
+    }
+  }
+
+  async function handleModelSubmit() {
+    if (!formModelName.trim()) {
+      message.warning('请输入模型名称')
+      return
+    }
+    setFormLoading(true)
+    try {
+      const params: CreateModelParams = {
+        provider: formProvider,
+        model_name: formModelName.trim(),
+        api_base_url: formApiBase.trim() || undefined,
+        api_key: formApiKey.trim() || undefined,
+        context_window: formContextWindow,
+      }
+      if (editingModel) {
+        await updateModel(editingModel.id, params)
+        message.success('模型已更新')
+      } else {
+        await createModel(params)
+        message.success('模型已添加')
+      }
+      setModelModalOpen(false)
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '操作失败')
+    } finally {
+      setFormLoading(false)
+    }
+  }
+
+  async function handleSetDefault(id: string) {
+    try {
+      await setDefaultModel(id)
+      message.success('已设为默认模型')
+    } catch {
+      message.error('设置失败')
+    }
+  }
+
+  async function handleTestModel(id: string) {
+    setTestingId(id)
+    try {
+      const ok = await testModel(id)
+      if (ok) {
+        message.success('连通性测试成功')
+      } else {
+        message.error('连通性测试失败')
+      }
+    } catch {
+      message.error('测试异常')
+    } finally {
+      setTestingId(null)
+    }
+  }
+
+  async function handleDeleteModel(id: string) {
+    try {
+      await deleteModel(id)
+      message.success('模型已删除')
+    } catch (err) {
+      message.error(err instanceof Error ? err.message : '删除失败')
+    }
+  }
+
+  const modelColumns: ColumnsType<AIModel> = [
+    {
+      title: '模型名称',
+      dataIndex: 'model_name',
+      key: 'model_name',
+      render: (name: string, record) => (
+        <Space>
+          <Text strong>{name}</Text>
+          {record.is_default && <Tag color="gold">默认</Tag>}
+        </Space>
+      ),
+    },
+    {
+      title: '提供商',
+      dataIndex: 'provider',
+      key: 'provider',
+      width: 100,
+      render: (p: string) => <Tag>{p}</Tag>,
+    },
+    {
+      title: 'API 地址',
+      dataIndex: 'api_base_url',
+      key: 'api_base_url',
+      width: 160,
+      render: (url: string | undefined) => url
+        ? <Tooltip title={url}><Text type="secondary" ellipsis style={{ maxWidth: 140 }}>{url.replace(/https?:\/\//, '')}</Text></Tooltip>
+        : <Text type="secondary">默认</Text>,
+    },
+    {
+      title: 'Context',
+      dataIndex: 'context_window',
+      key: 'context_window',
+      width: 100,
+      render: (ctx: number) => ctx >= 1048576 ? `${(ctx / 1048576).toFixed(0)}M` : ctx >= 1024 ? `${(ctx / 1024).toFixed(0)}K` : `${ctx}`,
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      width: 200,
+      render: (_, record) => (
+        <Space size="small">
+          <Tooltip title={record.is_default ? '当前默认' : '设为默认'}>
+            <Button
+              type="text"
+              size="small"
+              icon={record.is_default ? <StarFilled style={{ color: '#faad14' }} /> : <StarOutlined />}
+              disabled={record.is_default}
+              onClick={() => handleSetDefault(record.id)}
+            />
+          </Tooltip>
+          <Button type="text" size="small" icon={<EditOutlined />} onClick={() => openEditModal(record)} />
+          <Button
+            type="text"
+            size="small"
+            icon={<ThunderboltOutlined />}
+            loading={testingId === record.id}
+            onClick={() => handleTestModel(record.id)}
+          />
+          <Popconfirm
+            title="确认删除此模型？"
+            okText="删除"
+            cancelText="取消"
+            onConfirm={() => handleDeleteModel(record.id)}
+            disabled={record.is_default}
+          >
+            <Button type="text" size="small" danger icon={<DeleteOutlined />} disabled={record.is_default} />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ]
 
   // ---- 日志管理 ----
 
@@ -92,17 +270,6 @@ export default function SettingsPage() {
     }
   }
 
-  const modelOptions = provider === 'deepseek'
-    ? [
-        { label: 'deepseek-chat', value: 'deepseek-chat' },
-        { label: 'deepseek-reasoner', value: 'deepseek-reasoner' },
-      ]
-    : [
-        { label: 'gpt-4o', value: 'gpt-4o' },
-        { label: 'gpt-4o-mini', value: 'gpt-4o-mini' },
-        { label: 'gpt-4-turbo', value: 'gpt-4-turbo' },
-      ]
-
   return (
     <div style={{ height: '100vh', background: '#141414', overflow: 'auto' }}>
       {/* 头部 */}
@@ -111,35 +278,24 @@ export default function SettingsPage() {
         <Title level={4} style={{ margin: 0 }}>设置</Title>
       </div>
 
-      <div style={{ maxWidth: 680, margin: '0 auto', padding: 24 }}>
-        {/* AI 提供商 */}
-        <Card title="AI 模型配置" style={{ marginBottom: 16 }}>
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
-            <div>
-              <Text>提供商</Text>
-              <Select
-                value={provider}
-                onChange={(v: AIProvider) => {
-                  setProvider(v)
-                  setModel(v === 'deepseek' ? 'deepseek-chat' : 'gpt-4o')
-                }}
-                style={{ width: '100%', marginTop: 4 }}
-                options={[
-                  { label: 'DeepSeek', value: 'deepseek' },
-                  { label: 'OpenAI', value: 'openai' },
-                ]}
-              />
-            </div>
-            <div>
-              <Text>模型</Text>
-              <Select
-                value={model}
-                onChange={setModel}
-                style={{ width: '100%', marginTop: 4 }}
-                options={modelOptions}
-              />
-            </div>
-          </Space>
+      <div style={{ maxWidth: 800, margin: '0 auto', padding: 24 }}>
+        {/* 模型管理 */}
+        <Card
+          title={`AI 模型管理${currentModel ? `（当前: ${currentModel.model_name}）` : ''}`}
+          style={{ marginBottom: 16 }}
+          extra={
+            <Button type="primary" icon={<PlusOutlined />} size="small" onClick={openAddModal}>
+              添加模型
+            </Button>
+          }
+        >
+          <Table
+            dataSource={models}
+            columns={modelColumns}
+            rowKey="id"
+            size="small"
+            pagination={false}
+          />
         </Card>
 
         {/* Token 获取方式 */}
@@ -182,7 +338,7 @@ export default function SettingsPage() {
 
           {tokenMode === 'manual' && (
             <div>
-              <Text>API Key</Text>
+              <Text>全局 API Key（模型未配置独立 Key 时使用）</Text>
               <Input.Password
                 value={manualKey}
                 onChange={(e) => setManualKey(e.target.value)}
@@ -259,6 +415,70 @@ export default function SettingsPage() {
           }}>
             {logContent}
           </pre>
+        </Modal>
+
+        {/* 模型编辑弹窗 */}
+        <Modal
+          title={editingModel ? '编辑模型' : '添加模型'}
+          open={modelModalOpen}
+          onCancel={() => setModelModalOpen(false)}
+          onOk={handleModelSubmit}
+          confirmLoading={formLoading}
+          okText={editingModel ? '更新' : '添加'}
+          cancelText="取消"
+        >
+          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+            <div>
+              <Text>提供商</Text>
+              <Select
+                value={formProvider}
+                onChange={setFormProvider}
+                style={{ width: '100%', marginTop: 4 }}
+                options={[
+                  { label: 'DeepSeek', value: 'deepseek' },
+                  { label: 'OpenAI', value: 'openai' },
+                ]}
+              />
+            </div>
+            <div>
+              <Text>模型名称</Text>
+              <Input
+                value={formModelName}
+                onChange={(e) => handleModelNameChange(e.target.value)}
+                placeholder="如 deepseek-v4、gpt-4o"
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <div>
+              <Text>API 地址（可选）</Text>
+              <Input
+                value={formApiBase}
+                onChange={(e) => setFormApiBase(e.target.value)}
+                placeholder={`https://api.${formProvider}.com/v1/chat/completions`}
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <div>
+              <Text>API Key（可选，留空使用全局 Key）</Text>
+              <Input.Password
+                value={formApiKey}
+                onChange={(e) => setFormApiKey(e.target.value)}
+                placeholder="留空使用全局 Key"
+                style={{ marginTop: 4 }}
+              />
+            </div>
+            <div>
+              <Text>Context Window (tokens)</Text>
+              <InputNumber
+                value={formContextWindow}
+                onChange={(v) => setFormContextWindow(v || DEFAULT_CONTEXT_WINDOW)}
+                min={1024}
+                style={{ width: '100%', marginTop: 4 }}
+                formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                parser={(value) => Number((value || '').replace(/,/g, ''))}
+              />
+            </div>
+          </Space>
         </Modal>
       </div>
     </div>

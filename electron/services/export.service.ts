@@ -99,19 +99,6 @@ export async function exportPdf(htmlContent: string, title: string): Promise<voi
   log.info('PDF 导出成功:', filePath)
 }
 
-/**
- * Sheet 名称去重：同名 Sheet 自动加后缀 (2), (3)...
- * Excel Sheet 名称最多 31 字符
- */
-function dedupeName(name: string, counter: Record<string, number>): string {
-  const base = name.slice(0, 28)
-  if (!counter[base]) {
-    counter[base] = 1
-    return base
-  }
-  counter[base]++
-  return `${base}(${counter[base]})`
-}
 
 /**
  * 从 Markdown 内容中提取所有表格
@@ -125,14 +112,19 @@ function parseMarkdownTables(content: string): { title: string; rows: string[][]
   let currentTitle = 'Sheet'
   let tableRows: string[][] = []
   let inTable = false
-  let lastHeader: string[] | null = null
 
   for (const line of lines) {
     const trimmed = line.trim()
 
-    // 记录最近的 ## 标题
-    if (trimmed.startsWith('## ')) {
-      currentTitle = trimmed.slice(3).trim()
+    // 记录最近的 ## 或 ### 标题
+    if (trimmed.startsWith('## ') || trimmed.startsWith('### ')) {
+      currentTitle = trimmed.replace(/^#+\s*/, '').trim()
+    }
+
+    // 记录最近的粗体标题行（如 **🟢 前端任务：**）
+    const boldMatch = trimmed.match(/^\*\*(.+)\*\*:?$/) || trimmed.match(/^\*\*(.+?)\*\*\s*:?$/)
+    if (boldMatch) {
+      currentTitle = boldMatch[1].replace(/：$/, '').trim()
     }
 
     // 判断是否为表格行
@@ -154,7 +146,6 @@ function parseMarkdownTables(content: string): { title: string; rows: string[][]
           tables.push({ title: currentTitle, rows: [...tableRows] })
           tableRows = []
         }
-        lastHeader = cells
       }
 
       tableRows.push(cells)
@@ -175,6 +166,25 @@ function parseMarkdownTables(content: string): { title: string; rows: string[][]
   }
 
   return tables
+}
+
+/**
+ * 从标题文本推断任务归属
+ *
+ * 当表格没有"实现端"列时，根据标题中的 emoji/关键词推断分类
+ * 支持 🟢前端 / 🔵后端 / 🟣联调 等常见格式
+ */
+function classifyByTitle(title: string): '前端任务' | '后端任务' | '联调任务' | null {
+  if (title.includes('🟢') || (title.includes('前端') && !title.includes('前后端'))) {
+    return '前端任务'
+  }
+  if (title.includes('🔵') || (title.includes('后端') && !title.includes('前后端'))) {
+    return '后端任务'
+  }
+  if (title.includes('🟣') || title.includes('前后端') || title.includes('联调')) {
+    return '联调任务'
+  }
+  return null
 }
 
 /**
@@ -241,18 +251,6 @@ function convertNumericCells(ws: XLSX.WorkSheet): void {
   }
 }
 
-/**
- * 判断表格是否为测试用例/测试数据表，不应出现在排期 Excel 中
- */
-function isTestTable(title: string, header: string[]): boolean {
-  const testKeywords = ['测试用例', '测试数据', '测试场景', '测试方案', '验证数据', '边界测试']
-  const headerTestKeywords = ['预期结果', '测试输入', '测试输出', '实际结果', '测试步骤']
-  // 标题含测试关键词
-  if (testKeywords.some((kw) => title.includes(kw))) return true
-  // 表头含测试关键词
-  if (header.some((h) => headerTestKeywords.some((kw) => h.includes(kw)))) return true
-  return false
-}
 
 /**
  * 导出为 Excel
@@ -276,112 +274,83 @@ export async function exportExcel(content: string, title: string): Promise<void>
   const tables = parseMarkdownTables(content)
   const wb = XLSX.utils.book_new()
 
-  if (tables.length === 0) {
-    // 无表格时，将原始内容按行写入单 sheet
-    const rows = content.split('\n').map((line) => [line])
-    const ws = XLSX.utils.aoa_to_sheet(rows)
-    XLSX.utils.book_append_sheet(wb, ws, '内容')
-  } else {
-    // 按实现端分组：前端任务、后端任务、联调任务
-    const groups: Record<string, string[][]> = {}
-    // 收集没有实现端列的表格，作为额外 Sheet 导出
-    const extraSheets: { name: string; rows: string[][] }[] = []
-    // 记住最后一个包含"实现端"列的表头，供后续无表头表格复用
-    let lastImplHeader: string[] | null = null
-    let lastImplColIdx = -1
-    let lastTaskIdColIdx = -1
-    // Sheet 名称去重计数
-    const nameCount: Record<string, number> = {}
+  // 只保留前端、后端、联调三个 Sheet，其他一律过滤
+  const groups: Record<string, string[][]> = {}
+  let lastImplHeader: string[] | null = null
+  let lastImplColIdx = -1
+  let lastTaskIdColIdx = -1
+  let lastTitleCategory: '前端任务' | '后端任务' | '联调任务' | null = null
 
-    for (const table of tables) {
-      if (table.rows.length < 2) continue // 只有表头没有数据，跳过
+  for (const table of tables) {
+    if (table.rows.length < 2) continue
 
-      const firstRow = table.rows[0]
-      // 判断第一行是否为表头（包含"任务ID"或"实现端"关键词）
-      const firstRowIsHeader = firstRow.some((c) => c.includes('任务ID') || c.includes('实现端'))
+    const firstRow = table.rows[0]
+    const firstRowIsHeader = firstRow.some((c) => c.includes('任务ID') || c.includes('实现端'))
 
-      let header: string[]
-      let dataRows: string[][]
+    let header: string[]
+    let dataRows: string[][]
 
-      if (firstRowIsHeader) {
-        header = firstRow
-        dataRows = table.rows.slice(1)
-      } else if (lastImplHeader) {
-        // 无表头行，复用上一个有效表头
-        header = lastImplHeader
-        dataRows = table.rows
-      } else {
-        // 无表头且没有已知表头可复用，作为额外 Sheet（跳过测试数据表）
-        if (!isTestTable(table.title, table.rows[0])) {
-          const sheetName = dedupeName(table.title, nameCount)
-          extraSheets.push({ name: sheetName, rows: table.rows })
-        }
-        continue
-      }
-
-      // 查找"实现端"列的索引
-      const implColIdx = header.findIndex(
-        (h) => h.includes('实现端') || h.includes('实现')
-      )
-      // 查找"任务ID"列的索引（辅助分类）
-      const taskIdColIdx = header.findIndex(
-        (h) => h.includes('任务ID') || h.includes('ID') || h.includes('编号')
-      )
-
-      if (implColIdx === -1) {
-        // 没有实现端列的表格作为额外 Sheet 导出（跳过测试数据表）
-        if (!isTestTable(table.title, header)) {
-          const sheetName = dedupeName(table.title, nameCount)
-          extraSheets.push({ name: sheetName, rows: [header, ...dataRows] })
-        }
-        continue
-      }
-
-      // 记住当前有效表头
-      lastImplHeader = header
-      lastImplColIdx = implColIdx
-      lastTaskIdColIdx = taskIdColIdx
-
-      // 按实现端值分组
-      for (const row of dataRows) {
-        // 跳过看起来像表头的行（避免重复表头被当作数据）
-        if (row.some((c) => c.includes('任务ID') || c.includes('实现端'))) continue
-        // 跳过列数与表头不匹配的行
-        if (row.length < header.length - 1) continue
-
-        const taskId = lastTaskIdColIdx >= 0 ? (row[lastTaskIdColIdx] || '') : ''
-        const category = classifyRow(row[lastImplColIdx] || '', taskId)
-        if (!groups[category]) groups[category] = []
-        if (groups[category].length === 0) groups[category].push(header)
-        groups[category].push(row)
-      }
-    }
-  
-    // 按固定顺序输出任务 sheet
-    const sheetOrder = ['前端任务', '后端任务', '联调任务']
-    for (const name of sheetOrder) {
-      if (groups[name] && groups[name].length > 1) { // 至少表头+1行数据
-        const ws = XLSX.utils.aoa_to_sheet(groups[name])
-        convertNumericCells(ws)
-        XLSX.utils.book_append_sheet(wb, ws, name)
-      }
+    if (firstRowIsHeader) {
+      header = firstRow
+      dataRows = table.rows.slice(1)
+    } else if (lastImplHeader) {
+      header = lastImplHeader
+      dataRows = table.rows
+    } else {
+      // 无表头且无可复用表头，跳过
+      continue
     }
 
-    // 输出额外 sheet（汇总表、测试用例、关键路径等）
-    for (const sheet of extraSheets) {
-      if (sheet.rows.length >= 2) {
-        const ws = XLSX.utils.aoa_to_sheet(sheet.rows)
-        convertNumericCells(ws)
-        XLSX.utils.book_append_sheet(wb, ws, sheet.name)
-      }
+    const implColIdx = header.findIndex(
+      (h) => h.includes('实现端') || h.includes('实现')
+    )
+    const taskIdColIdx = header.findIndex(
+      (h) => h.includes('任务ID') || h.includes('ID') || h.includes('编号')
+    )
+
+    // 优先用表头中的“实现端”列，否则从标题推断
+    const titleCategory = implColIdx === -1 ? (classifyByTitle(table.title) || lastTitleCategory) : null
+    
+    if (implColIdx === -1 && !titleCategory) {
+      // 既没有实现端列，标题也无法推断归属，跳过
+      continue
     }
-  
-    // 如果分组后没有任何 sheet，兜底输出原始内容
-    if (Object.keys(groups).length === 0) {
-      const rows = content.split('\n').map((line) => [line])
-      const ws = XLSX.utils.aoa_to_sheet(rows)
-      XLSX.utils.book_append_sheet(wb, ws, '内容')
+    
+    lastImplHeader = header
+    lastImplColIdx = implColIdx
+    lastTaskIdColIdx = taskIdColIdx
+    lastTitleCategory = titleCategory
+
+    for (const row of dataRows) {
+      if (row.some((c) => c.includes('任务ID') || c.includes('实现端'))) continue
+      if (row.length < header.length - 1) continue
+
+      const taskId = lastTaskIdColIdx >= 0 ? (row[lastTaskIdColIdx] || '') : ''
+      // 有实现端列时按单元格值分类，否则用标题推断的分类
+      const category = lastImplColIdx >= 0
+        ? classifyRow(row[lastImplColIdx] || '', taskId)
+        : titleCategory!
+      if (!groups[category]) groups[category] = []
+      if (groups[category].length === 0) groups[category].push(header)
+      groups[category].push(row)
     }
+  }
+
+  // 按固定顺序只输出前端、后端、联调三个 Sheet
+  const sheetOrder = ['前端任务', '后端任务', '联调任务']
+  for (const name of sheetOrder) {
+    if (groups[name] && groups[name].length > 1) {
+      const ws = XLSX.utils.aoa_to_sheet(groups[name])
+      convertNumericCells(ws)
+      XLSX.utils.book_append_sheet(wb, ws, name)
+    }
+  }
+
+  // 没有匹配到任何任务时，提示用户
+  if (Object.keys(groups).length === 0) {
+    log.warn('导出排期: 未找到可识别的任务表格')
+    const ws = XLSX.utils.aoa_to_sheet([['未找到排期任务'], ['请确保 AI 回复中包含任务表格，且表格带有“实现端”列或标题包含前端/后端/联调标识']])
+    XLSX.utils.book_append_sheet(wb, ws, '提示')
   }
 
   XLSX.writeFile(wb, filePath)

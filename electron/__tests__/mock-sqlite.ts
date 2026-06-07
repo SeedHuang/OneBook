@@ -12,11 +12,30 @@ export class MockDatabase {
   private foreignKeys: Map<string, { column: string; parentTable: string; parentColumn: string }[]> = new Map()
   private _closed = false
 
-  pragma(_str: string): void {
-    // no-op in mock
+  pragma(_str: string, _opts?: unknown): unknown[] | void {
+    // 解析 table_info 请求
+    const match = _str.match(/table_info\('(\w+)'\)/)
+    if (match) {
+      const table = this.tables.get(match[1])
+      if (table) return table.columns.map(name => ({ name }))
+      return []
+    }
   }
 
   exec(sql: string): void {
+    // 处理 ALTER TABLE ADD COLUMN
+    const alterMatch = sql.match(/ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)/i)
+    if (alterMatch) {
+      const table = this.tables.get(alterMatch[1])
+      if (table && !table.columns.includes(alterMatch[2])) {
+        table.columns.push(alterMatch[2])
+        // 给现有行添加默认值
+        for (const row of table.rows) {
+          row[alterMatch[2]] = 0
+        }
+      }
+      return
+    }
     // 按 CREATE TABLE IF NOT EXISTS 分割，逐个解析
     const parts = sql.split(/CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+/i)
     for (const part of parts) {
@@ -63,6 +82,10 @@ export class MockDatabase {
 
   get closed(): boolean {
     return this._closed
+  }
+
+  transaction(fn: () => void): () => void {
+    return () => fn()
   }
 }
 
@@ -115,8 +138,36 @@ class MockStatement {
       if (!table) return { changes: 0 }
 
       const setMatch = sql.match(/SET\s+(.+?)\s+WHERE/i)
-      if (!setMatch) return { changes: 0 }
+      if (!setMatch) {
+        // SET without WHERE - update all rows
+        const setNoWhereMatch = sql.match(/SET\s+(.+)/i)
+        if (!setNoWhereMatch) return { changes: 0 }
+        const setParts = setNoWhereMatch[1].split(',').map(s => s.trim())
+        const setCols = setParts.map((s) => s.split(/\s*=\s*/)[0])
+        let changes = 0
+        for (const row of table.rows) {
+          let paramIdx = 0
+          setParts.forEach((part, i) => {
+            const col = setCols[i]
+            if (part.includes('?')) {
+              row[col] = params[paramIdx]
+              paramIdx++
+            } else {
+              const literalMatch = part.match(/=\s*(.+)$/)
+              if (literalMatch) {
+                const val = literalMatch[1].trim()
+                row[col] = isNaN(Number(val)) ? val : Number(val)
+              }
+            }
+          })
+          changes++
+        }
+        return { changes }
+      }
       const setCols = setMatch[1].split(',').map((s) => s.trim().split(/\s*=\s*/)[0])
+
+      // 计算 SET 子句中有多少个 ? 占位符（即实际需要参数的个数）
+      const setPlaceholderCount = (setMatch[1].match(/\?/g) || []).length
 
       const whereMatch = sql.match(/WHERE\s+(.+)$/i)
       const whereCol = whereMatch ? whereMatch[1].split(/\s*=\s*/)[0].trim() : null
@@ -124,11 +175,30 @@ class MockStatement {
       let changes = 0
       for (const row of table.rows) {
         if (whereCol) {
-          const whereVal = params[setCols.length]
+          const whereVal = params[setPlaceholderCount]
           if (row[whereCol] !== whereVal) continue
         }
-        setCols.forEach((col, i) => {
-          row[col] = params[i]
+        // SET 赋值：只对有 ? 占位符的列使用 params
+        let paramIdx = 0
+        const setParts = setMatch[1].split(',').map(s => s.trim())
+        setParts.forEach((part, i) => {
+          const col = setCols[i]
+          if (part.includes('?')) {
+            // 支持 col = col + ? 模式
+            if (part.includes(`${col} +`) || part.includes(`${col}+`)) {
+              row[col] = (Number(row[col]) || 0) + Number(params[paramIdx])
+            } else {
+              row[col] = params[paramIdx]
+            }
+            paramIdx++
+          } else {
+            // 字面量赋值：提取 = 右边的值
+            const literalMatch = part.match(/=\s*(.+)$/)
+            if (literalMatch) {
+              const val = literalMatch[1].trim()
+              row[col] = isNaN(Number(val)) ? val : Number(val)
+            }
+          }
         })
         changes++
       }

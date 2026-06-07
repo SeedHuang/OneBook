@@ -34,16 +34,26 @@ const electronAPI = {
   onChatStreamChunk: (callback: (content: string) => void) => ipcRenderer.on(IPC.AI_CHAT_STREAM_CHUNK, (_, content) => callback(content)),
   onChatStreamDone: (callback: () => void) => ipcRenderer.on(IPC.AI_CHAT_STREAM_DONE, () => callback()),
   onChatStreamError: (callback: (error: string) => void) => ipcRenderer.on(IPC.AI_CHAT_STREAM_ERROR, (_, error) => callback(error)),
+  onChatStreamUsage: (callback: (usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => void) => ipcRenderer.on(IPC.AI_CHAT_STREAM_USAGE, (_, usage) => callback(usage)),
   removeChatStreamListeners: () => {
     ipcRenderer.removeAllListeners(IPC.AI_CHAT_STREAM_CHUNK)
     ipcRenderer.removeAllListeners(IPC.AI_CHAT_STREAM_DONE)
     ipcRenderer.removeAllListeners(IPC.AI_CHAT_STREAM_ERROR)
+    ipcRenderer.removeAllListeners(IPC.AI_CHAT_STREAM_USAGE)
   },
 
   // 设置
   getSetting: (key: string) => ipcRenderer.invoke(IPC.SETTINGS_GET, key),
   setSetting: (key: string, value: string) => ipcRenderer.invoke(IPC.SETTINGS_SET, key, value),
   getAllSettings: () => ipcRenderer.invoke(IPC.SETTINGS_GET_ALL),
+
+  // 模型管理
+  listModels: () => ipcRenderer.invoke(IPC.MODEL_LIST),
+  createModel: (params: { provider: string; model_name: string; api_base_url?: string; api_key?: string; context_window?: number }) => ipcRenderer.invoke(IPC.MODEL_CREATE, params),
+  updateModel: (id: string, params: { provider?: string; model_name?: string; api_base_url?: string; api_key?: string; context_window?: number }) => ipcRenderer.invoke(IPC.MODEL_UPDATE, id, params),
+  deleteModel: (id: string) => ipcRenderer.invoke(IPC.MODEL_DELETE, id),
+  setDefaultModel: (id: string) => ipcRenderer.invoke(IPC.MODEL_SET_DEFAULT, id),
+  testModel: (id: string) => ipcRenderer.invoke(IPC.MODEL_TEST, id),
 
   // MKP
   getMkpStatus: () => ipcRenderer.invoke(IPC.MKP_STATUS),

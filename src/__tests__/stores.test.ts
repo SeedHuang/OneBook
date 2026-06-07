@@ -4,7 +4,7 @@
  * TDD: 测试 4 个前端 Store 的状态管理逻辑
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import type { Project, Document, Conversation, Message } from '../../shared/types'
+import type { Project, Document, Conversation, Message, AIModel } from '../../shared/types'
 import { useProjectStore } from '../../src/stores/projectStore'
 import { useDocumentStore } from '../../src/stores/documentStore'
 import { useChatStore } from '../../src/stores/chatStore'
@@ -24,6 +24,12 @@ const mockElectronAPI = {
   deleteConversation: vi.fn(),
   listMessages: vi.fn().mockResolvedValue([]),
   sendMessage: vi.fn(),
+  listModels: vi.fn().mockResolvedValue([]),
+  createModel: vi.fn(),
+  updateModel: vi.fn(),
+  deleteModel: vi.fn(),
+  setDefaultModel: vi.fn().mockResolvedValue(undefined),
+  testModel: vi.fn().mockResolvedValue({ success: true }),
 }
 
 // 设置 window.electronAPI
@@ -55,7 +61,7 @@ function makeDoc(overrides: Partial<Document> = {}): Document {
 function makeConv(overrides: Partial<Conversation> = {}): Conversation {
   return {
     id: 'c1', project_id: 'p1', document_id: null,
-    title: '对话1', created_at: '2026-01-01',
+    title: '对话1', total_tokens: 0, created_at: '2026-01-01',
     ...overrides,
   }
 }
@@ -296,12 +302,36 @@ describe('ChatStore', () => {
     useChatStore.getState().removeMessages([])
     expect(useChatStore.getState().messages).toHaveLength(2)
   })
+
+  it('updateConversationTokens 更新指定对话的 total_tokens', () => {
+    const conv = makeConv({ id: 'c1', total_tokens: 0 })
+    useChatStore.setState({ conversations: [conv] })
+    useChatStore.getState().updateConversationTokens('c1', 1500)
+    expect(useChatStore.getState().conversations[0].total_tokens).toBe(1500)
+  })
+
+  it('updateConversationTokens 不影响其他对话', () => {
+    useChatStore.setState({
+      conversations: [makeConv({ id: 'c1', total_tokens: 100 }), makeConv({ id: 'c2', total_tokens: 200 })],
+    })
+    useChatStore.getState().updateConversationTokens('c1', 500)
+    const convs = useChatStore.getState().conversations
+    expect(convs.find(c => c.id === 'c1')?.total_tokens).toBe(500)
+    expect(convs.find(c => c.id === 'c2')?.total_tokens).toBe(200)
+  })
+
+  it('updateConversationTokens 同步更新 currentConversation', () => {
+    const conv = makeConv({ id: 'c1', total_tokens: 0 })
+    useChatStore.setState({ conversations: [conv], currentConversation: conv })
+    useChatStore.getState().updateConversationTokens('c1', 3000)
+    expect(useChatStore.getState().currentConversation?.total_tokens).toBe(3000)
+  })
 })
 
 describe('SettingsStore', () => {
   beforeEach(() => {
     useSettingsStore.setState({
-      provider: 'deepseek', model: 'deepseek-chat',
+      provider: 'deepseek', model: 'deepseek-v4',
       tokenMode: 'mkp', manualKey: '',
       mkpConnected: false, siderCollapsed: false, chatCollapsed: false,
     })
@@ -362,7 +392,7 @@ describe('SettingsStore', () => {
     await useSettingsStore.getState().loadSettings()
 
     expect(useSettingsStore.getState().provider).toBe('deepseek')
-    expect(useSettingsStore.getState().model).toBe('deepseek-chat')
+    expect(useSettingsStore.getState().model).toBe('deepseek-v4')
   })
 
   it('loadSettings 空设置时使用默认值', async () => {
@@ -372,7 +402,70 @@ describe('SettingsStore', () => {
     await useSettingsStore.getState().loadSettings()
 
     expect(useSettingsStore.getState().provider).toBe('deepseek')
-    expect(useSettingsStore.getState().model).toBe('deepseek-chat')
+    expect(useSettingsStore.getState().model).toBe('deepseek-v4')
     expect(useSettingsStore.getState().mkpConnected).toBe(false)
+  })
+
+  it('loadModels 加载模型列表并设置 currentModel', async () => {
+    const models: AIModel[] = [
+      { id: 'm1', provider: 'deepseek', model_name: 'deepseek-v4', is_default: true, context_window: 1048576, created_at: '2026-01-01' },
+      { id: 'm2', provider: 'deepseek', model_name: 'deepseek-v4-flash', is_default: false, context_window: 1048576, created_at: '2026-01-02' },
+    ]
+    mockElectronAPI.listModels.mockResolvedValue(models)
+
+    await useSettingsStore.getState().loadModels()
+
+    expect(useSettingsStore.getState().models).toHaveLength(2)
+    expect(useSettingsStore.getState().currentModel?.id).toBe('m1')
+  })
+
+  it('setDefaultModel 切换默认模型并重新加载列表', async () => {
+    const models: AIModel[] = [
+      { id: 'm1', provider: 'deepseek', model_name: 'deepseek-v4', is_default: false, context_window: 1048576, created_at: '2026-01-01' },
+      { id: 'm2', provider: 'deepseek', model_name: 'deepseek-v4-flash', is_default: true, context_window: 1048576, created_at: '2026-01-02' },
+    ]
+    mockElectronAPI.listModels.mockResolvedValue(models)
+
+    await useSettingsStore.getState().setDefaultModel('m2')
+
+    expect(mockElectronAPI.setDefaultModel).toHaveBeenCalledWith('m2')
+    expect(useSettingsStore.getState().currentModel?.id).toBe('m2')
+  })
+
+  it('createModel 创建模型后重新加载列表', async () => {
+    const newModel: AIModel = { id: 'm3', provider: 'deepseek', model_name: 'deepseek-v4-flash', is_default: false, context_window: 1048576, created_at: '2026-01-03' }
+    mockElectronAPI.createModel.mockResolvedValue(newModel)
+    mockElectronAPI.listModels.mockResolvedValue([newModel])
+
+    const result = await useSettingsStore.getState().createModel({ provider: 'deepseek', model_name: 'deepseek-v4-flash' })
+
+    expect(result.model_name).toBe('deepseek-v4-flash')
+    expect(mockElectronAPI.createModel).toHaveBeenCalled()
+  })
+
+  it('deleteModel 删除模型后重新加载列表', async () => {
+    mockElectronAPI.listModels.mockResolvedValue([])
+
+    await useSettingsStore.getState().deleteModel('m1')
+
+    expect(mockElectronAPI.deleteModel).toHaveBeenCalledWith('m1')
+    expect(useSettingsStore.getState().models).toHaveLength(0)
+  })
+
+  it('testModel 返回连通性结果', async () => {
+    mockElectronAPI.testModel.mockResolvedValue({ success: true })
+    const result = await useSettingsStore.getState().testModel('m1')
+    expect(result).toBe(true)
+  })
+
+  it('testModel 失败时返回 false', async () => {
+    mockElectronAPI.testModel.mockRejectedValue(new Error('连接失败'))
+    const result = await useSettingsStore.getState().testModel('m1')
+    expect(result).toBe(false)
+  })
+
+  it('setTokenUsage 设置 token 使用统计', () => {
+    useSettingsStore.getState().setTokenUsage({ prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 })
+    expect(useSettingsStore.getState().tokenUsage?.total_tokens).toBe(150)
   })
 })
