@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Card, Select, Input, Button, Space, Typography, Tag, App, Radio } from 'antd'
-import { ArrowLeftOutlined, CheckCircleOutlined, CloseCircleOutlined, ApiOutlined } from '@ant-design/icons'
+import { Card, Select, Input, Button, Space, Typography, Tag, App, Radio, Modal, List } from 'antd'
+import { ArrowLeftOutlined, CheckCircleOutlined, CloseCircleOutlined, ApiOutlined, DeleteOutlined, FileTextOutlined, ReloadOutlined } from '@ant-design/icons'
 import { useSettingsStore } from '../../stores/settingsStore'
 import type { AIProvider } from '../../../shared/types'
 
@@ -11,10 +11,15 @@ export default function SettingsPage() {
   const navigate = useNavigate()
   const { message } = App.useApp()
   const {
-    provider, model, tokenMode, manualKey, mkpConnected,
-    setProvider, setModel, setTokenMode, setManualKey, setMkpConnected, loadSettings,
+    provider, model, tokenMode, manualKey, mkpPassword, mkpConnected,
+    setProvider, setModel, setTokenMode, setManualKey, setMkpPassword, setMkpConnected, loadSettings,
   } = useSettingsStore()
   const [saving, setSaving] = useState(false)
+  const [logFiles, setLogFiles] = useState<string[]>([])
+  const [logViewOpen, setLogViewOpen] = useState(false)
+  const [logContent, setLogContent] = useState('')
+  const [logViewTitle, setLogViewTitle] = useState('')
+  const [clearing, setClearing] = useState(false)
 
   useEffect(() => {
     loadSettings()
@@ -29,6 +34,9 @@ export default function SettingsPage() {
       if (tokenMode === 'manual') {
         await window.electronAPI.setSetting('ai.manualKey', manualKey)
       }
+      if (mkpPassword) {
+        await window.electronAPI.setSetting('mkp_master_password', mkpPassword)
+      }
       message.success('设置已保存')
     } catch {
       message.error('保存失败')
@@ -40,8 +48,8 @@ export default function SettingsPage() {
   async function handleCheckMkp() {
     try {
       const status = await window.electronAPI.getMkpStatus()
-      setMkpConnected(status?.connected ?? false)
-      if (status?.connected) {
+      setMkpConnected(status?.available ?? false)
+      if (status?.available) {
         message.success('MKP 连接正常')
       } else {
         message.warning('MKP daemon 未连接')
@@ -49,6 +57,38 @@ export default function SettingsPage() {
     } catch {
       setMkpConnected(false)
       message.error('MKP 状态检查失败')
+    }
+  }
+
+  // ---- 日志管理 ----
+
+  async function handleLoadLogs() {
+    try {
+      const files = await window.electronAPI.listLogFiles()
+      setLogFiles(files)
+    } catch {
+      message.error('加载日志列表失败')
+    }
+  }
+
+  async function handleViewLog(filename: string) {
+    try {
+      const content = await window.electronAPI.readLogFile(filename)
+      setLogContent(content || '（空文件）')
+      setLogViewTitle(filename)
+      setLogViewOpen(true)
+    } catch {
+      message.error('读取日志失败')
+    }
+  }
+
+  async function handleClearLogs() {
+    try {
+      const result = await window.electronAPI.clearLogs()
+      message.success(`已清除 ${result.deleted} 个日志文件`)
+      setLogFiles([])
+    } catch {
+      message.error('清除日志失败')
     }
   }
 
@@ -126,7 +166,18 @@ export default function SettingsPage() {
           </Radio.Group>
 
           {tokenMode === 'mkp' && (
-            <Button onClick={handleCheckMkp} style={{ marginTop: 8 }}>检查 MKP 连接</Button>
+            <Space direction="vertical" style={{ width: '100%' }} size="middle">
+              <div>
+                <Text>MKP 主密码（可选，用于连接 daemon）</Text>
+                <Input.Password
+                  value={mkpPassword}
+                  onChange={(e) => setMkpPassword(e.target.value)}
+                  placeholder="输入 MKP master password"
+                  style={{ marginTop: 4 }}
+                />
+              </div>
+              <Button onClick={handleCheckMkp}>检查 MKP 连接</Button>
+            </Space>
           )}
 
           {tokenMode === 'manual' && (
@@ -146,6 +197,69 @@ export default function SettingsPage() {
         <Button type="primary" block size="large" loading={saving} onClick={handleSave}>
           保存设置
         </Button>
+
+        {/* 日志管理 */}
+        <Card
+          title="日志管理"
+          style={{ marginTop: 24 }}
+          extra={
+            <Space>
+              <Button size="small" icon={<ReloadOutlined />} onClick={handleLoadLogs}>刷新</Button>
+              <Button size="small" danger icon={<DeleteOutlined />} loading={clearing} onClick={async () => {
+                setClearing(true)
+                await handleClearLogs()
+                setClearing(false)
+              }}>清除全部</Button>
+            </Space>
+          }
+        >
+          {logFiles.length === 0 ? (
+            <Text type="secondary">暂无日志文件，点击上方「刷新」加载</Text>
+          ) : (
+            <List
+              size="small"
+              dataSource={logFiles}
+              renderItem={(file: string) => (
+                <List.Item
+                  actions={[
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<FileTextOutlined />}
+                      onClick={() => handleViewLog(file)}
+                    >查看</Button>
+                  ]}
+                >
+                  {file}
+                </List.Item>
+              )}
+            />
+          )}
+        </Card>
+
+        {/* 日志查看弹窗 */}
+        <Modal
+          title={logViewTitle}
+          open={logViewOpen}
+          onCancel={() => setLogViewOpen(false)}
+          footer={null}
+          width={900}
+          styles={{ body: { maxHeight: '60vh', overflow: 'auto' } }}
+        >
+          <pre style={{
+            background: '#1a1a1a',
+            color: '#d4d4d4',
+            padding: 16,
+            borderRadius: 6,
+            fontSize: 12,
+            lineHeight: 1.6,
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-all',
+            margin: 0,
+          }}>
+            {logContent}
+          </pre>
+        </Modal>
       </div>
     </div>
   )

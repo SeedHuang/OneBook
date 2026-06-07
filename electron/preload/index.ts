@@ -61,6 +61,11 @@ const electronAPI = {
   minimizeWindow: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),
   maximizeWindow: () => ipcRenderer.send(IPC.WINDOW_MAXIMIZE),
   closeWindow: () => ipcRenderer.send(IPC.WINDOW_CLOSE),
+
+  // 日志
+  listLogFiles: () => ipcRenderer.invoke(IPC.LOG_LIST),
+  readLogFile: (filename: string) => ipcRenderer.invoke(IPC.LOG_READ, filename),
+  clearLogs: () => ipcRenderer.invoke(IPC.LOG_CLEAR),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

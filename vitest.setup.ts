@@ -63,3 +63,17 @@ vi.mock('mkp-sdk', () => ({
 vi.mock('mkp-sdk/electron', () => ({
   bindDaemonLifecycle: vi.fn(),
 }))
+
+// Mock 日志工具（避免测试中写入文件）
+const noopLogger = {
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+}
+vi.mock('./electron/utils/logger', () => ({
+  createLogger: () => noopLogger,
+  listLogFiles: vi.fn().mockReturnValue([]),
+  readLogFile: vi.fn().mockReturnValue(''),
+  clearAllLogs: vi.fn().mockReturnValue({ deleted: 0, errors: [] }),
+}))

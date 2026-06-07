@@ -53,4 +53,9 @@ export const IPC = {
   WINDOW_MINIMIZE: 'window:minimize',
   WINDOW_MAXIMIZE: 'window:maximize',
   WINDOW_CLOSE: 'window:close',
+
+  // 日志
+  LOG_LIST: 'log:list',
+  LOG_READ: 'log:read',
+  LOG_CLEAR: 'log:clear',
 } as const

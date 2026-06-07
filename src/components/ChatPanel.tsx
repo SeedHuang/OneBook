@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
-import { Input, Button, Space, Typography, Dropdown, Tag, App, Avatar, Spin, Select } from 'antd'
+import { Input, Button, Space, Typography, Dropdown, Tag, App, Avatar, Select, Popconfirm } from 'antd'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   SendOutlined,
   RobotOutlined,
@@ -9,9 +11,11 @@ import {
   FileTextOutlined,
   PlusOutlined,
   ExportOutlined,
+  DeleteOutlined,
   FilePdfOutlined,
   FileWordOutlined,
   FileMarkdownOutlined,
+  LoadingOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { useChatStore } from '../stores/chatStore'
@@ -31,15 +35,56 @@ const QUICK_ACTIONS: MenuProps['items'] = [
   { key: 'generate', label: '生成任务', icon: <FileTextOutlined /> },
 ]
 
+/** AI 分析角色定义与结构化分析框架 */
+const SYSTEM_PROMPT = `你是一位资深产品架构师和需求分析专家，拥有15年以上的产品设计、需求评审和技术架构经验。你同时具备产品经理、交互设计师和前端工程师的视角。
+
+## 分析原则
+
+1. **不遗漏** — 每个功能点必须拆解到具体的用户操作路径，覆盖正常流程、异常流程和边界条件
+2. **不假设** — 文档中未明确说明的内容必须标注为"待确认"，不脑补、不脑测
+3. **可执行** — 输出的功能点、任务必须足够具体，开发人员和测试人员可以直接引用
+4. **多角色交叉验证** — 分别从产品经理、前端工程师、测试工程师的角度审视，发现单一视角的盲区
+
+## 分析框架
+
+### 阶段一：文档概览
+- 列出所有收到的文档名称、类型和大致内容量
+- 说明文档间的关联关系（如果有的话）
+- 概述项目背景和目标用户
+
+### 阶段二：逐文档深度分析
+- **功能模块拆解**: 按业务模块分组，每个模块下列出功能点
+- **用户角色识别**: 系统涉及哪些角色，各角色的权限和操作范围
+- **交互流程梳理**: 核心操作流程、页面跳转关系、状态变化
+- **前端逻辑检查**: 表单验证规则、状态管理、权限控制、异常提示
+- **边界条件**: 空数据、加载状态、错误处理、并发场景、极端输入
+
+### 阶段三：交叉验证
+- 文档间的一致性检查（同一概念在不同文档中的定义是否冲突）
+- 完整性评估（PRD 中的功能点是否都有对应的 UI/交互设计）
+- 遗漏检测（基于行业最佳实践，指出可能遗漏的功能点）
+
+### 阶段四：问题与建议
+- 按优先级（P0/P1/P2）列出所有发现的问题
+- 每个问题给出具体的改进建议
+- 标注不确定的部分，建议与产品/设计确认
+
+## 输出要求
+- 使用 Markdown 结构化输出，方便后续引用
+- 功能点编号格式: [模块]-[编号]（如 ORD-001 订单模块第1个功能点）
+- 对于需求描述不清晰的地方，给出你的理解 + "建议确认"
+- 根据用户的具体请求调整分析重点，不必每次都输出全部阶段`
+
 export default function ChatPanel({ projectId }: ChatPanelProps) {
   const { message: msgApi } = App.useApp()
   const {
     conversations, currentConversation, messages, streaming, streamContent,
     setCurrentConversation, setMessages, setStreaming,
-    setStreamContent, appendStreamContent, addMessage, addConversation,
+    setStreamContent, appendStreamContent, addMessage, addConversation, removeConversation,
   } = useChatStore()
-  const { currentDocument } = useDocumentStore()
+  const { currentDocument, documents } = useDocumentStore()
   const [input, setInput] = useState('')
+  const [streamStatus, setStreamStatus] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Auto scroll
@@ -57,6 +102,7 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
     })
     window.electronAPI.onChatStreamError((error: string) => {
       setStreaming(false)
+      setStreamStatus('')
       msgApi.error(`AI 响应错误: ${error}`)
     })
     return () => {
@@ -145,11 +191,23 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
     setStreaming(true)
     setStreamContent('')
 
-    // Build messages array for API
-    const apiMessages = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }))
+    // 构建文档上下文并显示发送状态
+    setStreamStatus(`正在准备 ${documents.length} 份文档...`)
+    const docContext = documents.length > 0
+      ? documents.map((d) => `### ${d.name}\n${d.content || '(内容为空)'}`).join('\n\n---\n\n')
+      : '(未导入任何文档)'
+    const systemMsg = {
+      role: 'system' as const,
+      content: `${SYSTEM_PROMPT}\n\n---\n\n## 以下是用户提供的项目文档\n\n${docContext}`,
+    }
+    const history = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }))
+    const apiMessages = [systemMsg, ...history]
+
+    setStreamStatus(`正在发送 ${documents.length} 份文档 (${documents.map((d) => d.name).join(', ')})，等待 AI 响应...`)
 
     try {
       await window.electronAPI.startChatStream(apiMessages)
+      setStreamStatus('')
       // Stream will come via event listeners
       // When done, save the assistant message
       const checkDone = setInterval(() => {
@@ -171,16 +229,17 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
       }, 100)
     } catch (e: any) {
       setStreaming(false)
+      setStreamStatus('')
       msgApi.error(e?.message || '发送失败')
     }
   }
 
   function handleQuickAction(key: string) {
-    const docName = currentDocument?.name || '当前文档'
+    const docNames = documents.map((d) => `「${d.name}」`).join('、') || '项目文档'
     const prompts: Record<string, string> = {
-      review: `请对「${docName}」进行需求审查，检查其中的矛盾、遗漏、歧义等问题，并给出改进建议。`,
-      extract: `请从「${docName}」中提取关键需求信息，包括功能点、角色、业务流程等，生成结构化摘要。`,
-      generate: `请根据「${docName}」的内容，生成开发任务列表和测试用例。`,
+      review: `请对以下文档进行需求审查，检查其中的矛盾、遗漏、歧义等问题，并给出改进建议：${docNames}`,
+      extract: `请从以下文档中提取关键需求信息，包括功能点、角色、业务流程等，生成结构化摘要：${docNames}`,
+      generate: `请根据以下文档的内容，生成开发任务列表和测试用例：${docNames}`,
     }
     handleSend(prompts[key])
   }
@@ -222,7 +281,7 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
         <Space>
           <RobotOutlined style={{ color: '#89b4fa' }} />
           <Text strong style={{ fontSize: 13 }}>AI 助手</Text>
-          {currentDocument && <Tag color="blue" style={{ fontSize: 11 }}>{currentDocument.name}</Tag>}
+          {currentDocument && <Tag color="blue" style={{ fontSize: 11 }}>{documents.length} 份文档已加载</Tag>}
         </Space>
         <Space>
           {messages.length > 0 && (
@@ -234,17 +293,34 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
         </Space>
       </div>
 
-      {/* 对话切换选择器 */}
+      {/* 对话切换选择器 + 删除 */}
       {conversations.length > 0 && (
-        <div style={{ padding: '4px 12px', borderBottom: '1px solid #252525' }}>
+        <div style={{ padding: '4px 12px', borderBottom: '1px solid #252525', display: 'flex', gap: 4 }}>
           <Select
             size="small"
-            style={{ width: '100%' }}
+            style={{ flex: 1 }}
             value={currentConversation?.id}
             onChange={handleSwitchConversation}
             placeholder="选择对话"
             options={conversations.map((c) => ({ label: c.title || '未命名对话', value: c.id }))}
           />
+          <Popconfirm
+            title="删除此对话？"
+            onConfirm={async () => {
+              if (currentConversation) {
+                try {
+                  await window.electronAPI.deleteConversation(currentConversation.id)
+                  removeConversation(currentConversation.id)
+                } catch {
+                  msgApi.error('删除失败')
+                }
+              }
+            }}
+            okText="删除"
+            cancelText="取消"
+          >
+            <Button type="text" size="small" icon={<DeleteOutlined />} danger />
+          </Popconfirm>
         </div>
       )}
 
@@ -255,13 +331,13 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
             <RobotOutlined style={{ fontSize: 40, marginBottom: 12, color: '#89b4fa' }} />
             <div style={{ marginBottom: 16 }}>你好！我可以帮你分析需求文档</div>
             <Space direction="vertical" style={{ width: '100%' }}>
-              <Button block type="dashed" onClick={() => handleQuickAction('review')} disabled={!currentDocument}>
-                审查当前文档
+              <Button block type="dashed" onClick={() => handleQuickAction('review')} disabled={documents.length === 0}>
+                审查所有文档
               </Button>
-              <Button block type="dashed" onClick={() => handleQuickAction('extract')} disabled={!currentDocument}>
+              <Button block type="dashed" onClick={() => handleQuickAction('extract')} disabled={documents.length === 0}>
                 提取需求要点
               </Button>
-              <Button block type="dashed" onClick={() => handleQuickAction('generate')} disabled={!currentDocument}>
+              <Button block type="dashed" onClick={() => handleQuickAction('generate')} disabled={documents.length === 0}>
                 生成开发任务
               </Button>
             </Space>
@@ -282,10 +358,15 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
                   background: msg.role === 'user' ? '#2a2a3a' : '#1f2f1f',
                   fontSize: 13,
                   lineHeight: 1.6,
-                  whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
                 }}>
-                  {msg.content}
+                  {msg.role === 'assistant' ? (
+                    <div className="chat-markdown">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
+                  )}
                 </div>
               </div>
             ))}
@@ -301,10 +382,18 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
                   background: '#1f2f1f',
                   fontSize: 13,
                   lineHeight: 1.6,
-                  whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',
                 }}>
-                  {streamContent || <Spin size="small" />}
+                  {streamContent ? (
+                    <div className="chat-markdown">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamContent}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    <div style={{ color: '#89b4fa' }}>
+                      <LoadingOutlined style={{ marginRight: 8 }} />
+                      {streamStatus || '正在等待 AI 响应...'}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -314,7 +403,7 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
       </div>
 
       {/* 快捷操作 */}
-      {messages.length > 0 && currentDocument && (
+      {messages.length > 0 && documents.length > 0 && (
         <div style={{ padding: '4px 12px', display: 'flex', gap: 4 }}>
           <Dropdown menu={{ items: QUICK_ACTIONS, onClick: ({ key }) => handleQuickAction(key) }} trigger={['click']}>
             <Button size="small" type="dashed">快捷分析</Button>

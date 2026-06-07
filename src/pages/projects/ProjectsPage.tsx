@@ -30,8 +30,9 @@ export default function ProjectsPage() {
     try {
       const list = await window.electronAPI.listProjects()
       setProjects(list)
-    } catch {
-      message.error('加载项目失败')
+    } catch (err) {
+      console.error('[ProjectsPage] 加载项目失败:', err)
+      message.error(`加载项目失败: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setLoading(false)
     }

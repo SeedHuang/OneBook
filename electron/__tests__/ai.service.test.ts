@@ -8,14 +8,14 @@ import * as dbService from '../services/db.service'
 
 // Mock db.service 中的 getSetting
 vi.spyOn(dbService, 'getSetting').mockImplementation((key: string) => {
-  if (key === 'deepseek_api_key') return 'test-deepseek-key'
-  if (key === 'openai_api_key') return 'test-openai-key'
-  if (key === 'ai_provider') return 'deepseek'
-  if (key === 'ai_model') return 'deepseek-chat'
+  if (key === 'token.mode') return 'mkp'
+  if (key === 'ai.manualKey') return 'test-deepseek-key'
+  if (key === 'ai.provider') return 'deepseek'
+  if (key === 'ai.model') return 'deepseek-chat'
   return null
 })
 
-import { getAIToken, getCurrentModel, buildAnalysisMessages, checkMkpStatus } from '../services/ai.service'
+import { getAIToken, getCurrentModel, buildAnalysisMessages, checkMkpStatus, streamChat } from '../services/ai.service'
 
 describe('AI 服务', () => {
   beforeEach(() => {
@@ -30,7 +30,10 @@ describe('AI 服务', () => {
     })
 
     it('MKP 和手动 Key 都不可用时抛出错误', async () => {
-      vi.mocked(dbService.getSetting).mockReturnValueOnce(null)
+      vi.mocked(dbService.getSetting).mockImplementation((key: string) => {
+        if (key === 'token.mode') return 'mkp'
+        return null
+      })
       await expect(getAIToken('openai')).rejects.toThrow('未配置')
     })
   })
@@ -83,6 +86,175 @@ describe('AI 服务', () => {
       const status = await checkMkpStatus()
       expect(status.available).toBe(false)
       expect(status.services).toEqual([])
+    })
+  })
+
+  describe('streamChat', () => {
+    beforeEach(() => {
+      // 重新设置 getSetting mock（被 clearAllMocks 重置了）
+      vi.mocked(dbService.getSetting).mockImplementation((key: string) => {
+        if (key === 'token.mode') return 'mkp'
+        if (key === 'ai.manualKey') return 'test-deepseek-key'
+        if (key === 'ai.provider') return 'deepseek'
+        if (key === 'ai.model') return 'deepseek-chat'
+        return null
+      })
+    })
+
+    /**
+     * 模拟 SSE 流式响应
+     */
+    function createMockSSEStream(chunks: string[]): ReadableStream<Uint8Array> {
+      const encoder = new TextEncoder()
+      let index = 0
+      return new ReadableStream({
+        pull(controller) {
+          if (index < chunks.length) {
+            controller.enqueue(encoder.encode(chunks[index]))
+            index++
+          } else {
+            controller.close()
+          }
+        },
+      })
+    }
+
+    it('正常流式输出多个 chunk 后收到 done', async () => {
+      const stream = createMockSSEStream([
+        'data: {"choices":[{"delta":{"content":"你好"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"世界"}}]}\n\n',
+        'data: [DONE]\n\n',
+      ])
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: stream,
+      })
+
+      const results: any[] = []
+      for await (const chunk of streamChat([{ role: 'user', content: '你好' }])) {
+        results.push(chunk)
+      }
+
+      expect(results).toHaveLength(3)
+      expect(results[0]).toEqual({ type: 'chunk', content: '你好' })
+      expect(results[1]).toEqual({ type: 'chunk', content: '世界' })
+      expect(results[2]).toEqual({ type: 'done' })
+    })
+
+    it('API 返回非 200 状态码时产出 error', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        text: () => Promise.resolve('Unauthorized'),
+      })
+
+      const results: any[] = []
+      for await (const chunk of streamChat([{ role: 'user', content: 'hi' }])) {
+        results.push(chunk)
+      }
+
+      expect(results).toHaveLength(1)
+      expect(results[0].type).toBe('error')
+      expect(results[0].error).toContain('401')
+    })
+
+    it('响应流为空时产出 error', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: null,
+      })
+
+      const results: any[] = []
+      for await (const chunk of streamChat([{ role: 'user', content: 'hi' }])) {
+        results.push(chunk)
+      }
+
+      expect(results).toHaveLength(1)
+      expect(results[0].type).toBe('error')
+      expect(results[0].error).toContain('无法读取响应流')
+    })
+
+    it('流中途断开时产出 done', async () => {
+      const stream = createMockSSEStream([
+        'data: {"choices":[{"delta":{"content":"部分内容"}}]}\n\n',
+      ])
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: stream,
+      })
+
+      const results: any[] = []
+      for await (const chunk of streamChat([{ role: 'user', content: 'hi' }])) {
+        results.push(chunk)
+      }
+
+      // 流结束后应产出 done
+      expect(results.some((r) => r.type === 'done')).toBe(true)
+    })
+
+    it('JSON 解析错误被忽略不中断流', async () => {
+      const stream = createMockSSEStream([
+        'data: {invalid json}\n\n',
+        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
+        'data: [DONE]\n\n',
+      ])
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: stream,
+      })
+
+      const results: any[] = []
+      for await (const chunk of streamChat([{ role: 'user', content: 'hi' }])) {
+        results.push(chunk)
+      }
+
+      // 无效 JSON 被忽略，只应产出有效 chunk 和 done
+      expect(results).toHaveLength(2)
+      expect(results[0]).toEqual({ type: 'chunk', content: 'ok' })
+      expect(results[1]).toEqual({ type: 'done' })
+    })
+
+    it('使用自定义模型配置覆盖默认值', async () => {
+      const stream = createMockSSEStream(['data: [DONE]\n\n'])
+      global.fetch = vi.fn().mockResolvedValue({ ok: true, body: stream })
+
+      const results: any[] = []
+      for await (const chunk of streamChat(
+        [{ role: 'user', content: 'hi' }],
+        { provider: 'openai', model: 'gpt-4o' }
+      )) {
+        results.push(chunk)
+      }
+
+      // 验证 fetch 使用了 openai URL
+      expect(global.fetch).toHaveBeenCalledWith(
+        'https://api.openai.com/v1/chat/completions',
+        expect.objectContaining({
+          body: expect.stringContaining('gpt-4o'),
+        })
+      )
+    })
+
+    it('多行数据在同一 buffer 中正确解析', async () => {
+      // 所有 SSE 数据在一个 chunk 中
+      const stream = createMockSSEStream([
+        'data: {"choices":[{"delta":{"content":"A"}}]}\n\ndata: {"choices":[{"delta":{"content":"B"}}]}\n\ndata: [DONE]\n\n',
+      ])
+
+      global.fetch = vi.fn().mockResolvedValue({ ok: true, body: stream })
+
+      const results: any[] = []
+      for await (const chunk of streamChat([{ role: 'user', content: 'hi' }])) {
+        results.push(chunk)
+      }
+
+      expect(results).toHaveLength(3)
+      expect(results[0]).toEqual({ type: 'chunk', content: 'A' })
+      expect(results[1]).toEqual({ type: 'chunk', content: 'B' })
+      expect(results[2]).toEqual({ type: 'done' })
     })
   })
 })

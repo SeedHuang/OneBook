@@ -18,7 +18,7 @@ export interface Document {
   id: string
   project_id: string
   name: string
-  type: 'md' | 'xlsx'
+  type: 'md' | 'xlsx' | 'html'
   content: string
   source: 'local' | 'git' | 'url'
   file_path: string | null

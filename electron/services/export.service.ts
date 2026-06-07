@@ -7,9 +7,13 @@ import { dialog } from 'electron'
 import fs from 'fs/promises'
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx'
 import jsPDF from 'jspdf'
+import { createLogger } from '../utils/logger'
+
+const log = createLogger('export')
 
 /** 导出为 Markdown */
 export async function exportMarkdown(content: string, title: string): Promise<void> {
+  log.info('导出 Markdown:', title)
   const { filePath } = await dialog.showSaveDialog({
     title: '导出 Markdown',
     defaultPath: `${title}.md`,
@@ -17,17 +21,24 @@ export async function exportMarkdown(content: string, title: string): Promise<vo
   })
   if (filePath) {
     await fs.writeFile(filePath, content, 'utf-8')
+    log.info('Markdown 导出成功:', filePath)
+  } else {
+    log.info('Markdown 导出取消')
   }
 }
 
 /** 导出为 Word */
 export async function exportWord(content: string, title: string): Promise<void> {
+  log.info('导出 Word:', title)
   const { filePath } = await dialog.showSaveDialog({
     title: '导出 Word',
     defaultPath: `${title}.docx`,
     filters: [{ name: 'Word 文档', extensions: ['docx'] }],
   })
-  if (!filePath) return
+  if (!filePath) {
+    log.info('Word 导出取消')
+    return
+  }
 
   const paragraphs = content.split('\n').map((line) => {
     if (line.startsWith('# ')) {
@@ -45,16 +56,21 @@ export async function exportWord(content: string, title: string): Promise<void> 
   const doc = new Document({ sections: [{ children: paragraphs }] })
   const buffer = await Packer.toBuffer(doc)
   await fs.writeFile(filePath, buffer)
+  log.info('Word 导出成功:', filePath)
 }
 
 /** 导出为 PDF */
 export async function exportPdf(htmlContent: string, title: string): Promise<void> {
+  log.info('导出 PDF:', title)
   const { filePath } = await dialog.showSaveDialog({
     title: '导出 PDF',
     defaultPath: `${title}.pdf`,
     filters: [{ name: 'PDF', extensions: ['pdf'] }],
   })
-  if (!filePath) return
+  if (!filePath) {
+    log.info('PDF 导出取消')
+    return
+  }
 
   const pdf = new jsPDF()
   const lines = htmlContent.replace(/<[^>]+>/g, '').split('\n')
@@ -65,4 +81,5 @@ export async function exportPdf(htmlContent: string, title: string): Promise<voi
     y += 7
   }
   pdf.save(filePath)
+  log.info('PDF 导出成功:', filePath)
 }

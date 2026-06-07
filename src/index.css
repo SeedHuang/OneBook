@@ -149,3 +149,86 @@ html, body, #root {
 [data-panel-resize-handle-id]:hover {
   background: #89b4fa !important;
 }
+
+/* AI 回复 Markdown 渲染样式 */
+.chat-markdown h1,
+.chat-markdown h2,
+.chat-markdown h3 {
+  margin: 12px 0 6px;
+  color: #cdd6f4;
+}
+
+.chat-markdown h1 { font-size: 1.3em; }
+.chat-markdown h2 { font-size: 1.15em; }
+.chat-markdown h3 { font-size: 1.05em; }
+
+.chat-markdown p {
+  margin: 4px 0;
+}
+
+.chat-markdown ul,
+.chat-markdown ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+
+.chat-markdown li {
+  margin: 2px 0;
+}
+
+.chat-markdown code {
+  background: #313244;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  color: #f38ba8;
+}
+
+.chat-markdown pre {
+  background: #1e1e2e;
+  padding: 8px 12px;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 6px 0;
+}
+
+.chat-markdown pre code {
+  background: transparent;
+  padding: 0;
+  color: #cdd6f4;
+}
+
+.chat-markdown blockquote {
+  border-left: 3px solid #89b4fa;
+  margin: 6px 0;
+  padding: 2px 10px;
+  color: #a6adc8;
+}
+
+.chat-markdown table {
+  border-collapse: collapse;
+  margin: 6px 0;
+  width: 100%;
+}
+
+.chat-markdown th,
+.chat-markdown td {
+  border: 1px solid #45475a;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.chat-markdown th {
+  background: #313244;
+  color: #cdd6f4;
+}
+
+.chat-markdown hr {
+  border: none;
+  border-top: 1px solid #45475a;
+  margin: 10px 0;
+}
+
+.chat-markdown strong {
+  color: #f9e2af;
+}
