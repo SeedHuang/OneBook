@@ -138,6 +138,38 @@ export function initDatabase(): void {
     log.warn('models 表预填跳过:', err instanceof Error ? err.message : String(err))
   }
 
+  // 迁移: 旧模型名更新为新 API 名称
+  try {
+    const MODEL_NAME_MIGRATION: Record<string, string> = {
+      'deepseek-chat': 'deepseek-v4-flash',
+      'deepseek-reasoner': 'deepseek-v4-pro',
+      'deepseek-v4': 'deepseek-v4-flash',
+    }
+    for (const [oldName, newName] of Object.entries(MODEL_NAME_MIGRATION)) {
+      // 检查是否存在旧名称记录
+      const oldModel = db.prepare('SELECT id FROM models WHERE model_name = ?').get(oldName) as { id: string } | undefined
+      if (!oldModel) continue
+
+      // 检查是否已有新名称记录（避免重复）
+      const existing = db.prepare('SELECT id FROM models WHERE model_name = ?').get(newName) as { id: string } | undefined
+      if (existing) {
+        // 已有新名称记录，删除旧的，并将旧记录的 is_default 转移给新记录
+        const wasDefault = db.prepare('SELECT is_default FROM models WHERE id = ?').get(oldModel.id) as { is_default: number } | undefined
+        if (wasDefault?.is_default) {
+          db.prepare('UPDATE models SET is_default = 1 WHERE id = ?').run(existing.id)
+        }
+        db.prepare('DELETE FROM models WHERE id = ?').run(oldModel.id)
+        log.info(`模型迁移: 删除旧模型 ${oldName}（已有 ${newName}）`)
+      } else {
+        // 直接重命名
+        db.prepare('UPDATE models SET model_name = ?, context_window = 1048576 WHERE model_name = ?').run(newName, oldName)
+        log.info(`模型迁移: ${oldName} → ${newName}`)
+      }
+    }
+  } catch (err) {
+    log.warn('模型名称迁移跳过:', err instanceof Error ? err.message : String(err))
+  }
+
   // 迁移: conversations 表添加 total_tokens 列
   try {
     const cols = db.pragma("table_info('conversations')", { simple: false }) as Array<{ name: string }>
