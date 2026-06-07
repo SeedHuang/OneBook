@@ -8,6 +8,10 @@ import {
   BulbOutlined,
   FileTextOutlined,
   PlusOutlined,
+  ExportOutlined,
+  FilePdfOutlined,
+  FileWordOutlined,
+  FileMarkdownOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { useChatStore } from '../stores/chatStore'
@@ -146,6 +150,36 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
     handleSend(prompts[key])
   }
 
+  /** 导出对话内容为报告 */
+  async function handleExport(format: 'pdf' | 'word' | 'markdown') {
+    // 将对话消息拼接为报告内容
+    const title = currentConversation?.title || 'AI 分析报告'
+    const reportContent = messages
+      .map((m) => `## ${m.role === 'user' ? '用户提问' : 'AI 回答'}\n\n${m.content}`)
+      .join('\n\n---\n\n')
+
+    try {
+      if (format === 'markdown') {
+        await window.electronAPI.exportMarkdown(reportContent, title)
+      } else if (format === 'word') {
+        await window.electronAPI.exportWord(reportContent, title)
+      } else if (format === 'pdf') {
+        // 简单 HTML 包装用于 PDF 导出
+        const html = `<h1>${title}</h1>${messages.map((m) => `<h2>${m.role === 'user' ? '用户提问' : 'AI 回答'}</h2><div>${m.content.replace(/\n/g, '<br/>')}</div>`).join('<hr/>')}`
+        await window.electronAPI.exportPdf(html, title)
+      }
+      msgApi.success(`${format.toUpperCase()} 导出成功`)
+    } catch {
+      msgApi.error('导出失败')
+    }
+  }
+
+  const exportItems: MenuProps['items'] = [
+    { key: 'pdf', label: '导出 PDF', icon: <FilePdfOutlined /> },
+    { key: 'word', label: '导出 Word', icon: <FileWordOutlined /> },
+    { key: 'markdown', label: '导出 Markdown', icon: <FileMarkdownOutlined /> },
+  ]
+
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#1a1a1a' }}>
       {/* 头部 */}
@@ -155,7 +189,14 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
           <Text strong style={{ fontSize: 13 }}>AI 助手</Text>
           {currentDocument && <Tag color="blue" style={{ fontSize: 11 }}>{currentDocument.name}</Tag>}
         </Space>
-        <Button type="text" size="small" icon={<PlusOutlined />} onClick={handleNewConversation} />
+        <Space>
+          {messages.length > 0 && (
+            <Dropdown menu={{ items: exportItems, onClick: ({ key }) => handleExport(key as 'pdf' | 'word' | 'markdown') }} trigger={['click']}>
+              <Button type="text" size="small" icon={<ExportOutlined />} />
+            </Dropdown>
+          )}
+          <Button type="text" size="small" icon={<PlusOutlined />} onClick={handleNewConversation} />
+        </Space>
       </div>
 
       {/* 消息列表 */}
