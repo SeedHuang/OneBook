@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, Fragment } from 'react'
-import { Input, Button, Space, Typography, Dropdown, Tag, App, Avatar, Select, Popconfirm } from 'antd'
+import { Input, Button, Space, Typography, Dropdown, Tag, App, Avatar, Select, Popconfirm, Progress, Tooltip } from 'antd'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import {
@@ -22,11 +22,13 @@ import {
 import type { MenuProps } from 'antd'
 import { useChatStore } from '../stores/chatStore'
 import { useDocumentStore } from '../stores/documentStore'
+import { useSettingsStore } from '../stores/settingsStore'
 import type { Message } from '../../shared/types'
 import systemPrompt from '../prompts/system.md?raw'
 import reviewPrompt from '../prompts/review.md?raw'
 import extractPrompt from '../prompts/extract.md?raw'
 import generatePrompt from '../prompts/generate.md?raw'
+import { getContextRingColor, formatContextTokens, getContextPercent } from './contextRing'
 
 const { Text } = Typography
 const { TextArea } = Input
@@ -51,6 +53,7 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
     setStreamContent, appendStreamContent, addMessage, addConversation, removeConversation, removeMessages,
   } = useChatStore()
   const { currentDocument, documents } = useDocumentStore()
+  const { models, currentModel, loadModels, setDefaultModel, tokenUsage, setTokenUsage } = useSettingsStore()
   const [input, setInput] = useState('')
   const [streamStatus, setStreamStatus] = useState('')
   const [countdown, setCountdown] = useState(0)
@@ -108,9 +111,22 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
       setStreamStatus('')
       msgApi.error(`AI 响应错误: ${error}`)
     })
+    window.electronAPI.onChatStreamUsage((usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => {
+      setTokenUsage(usage)
+      // 更新对话的累积 token 数
+      const conv = useChatStore.getState().currentConversation
+      if (conv) {
+        useChatStore.getState().updateConversationTokens(conv.id, usage.total_tokens)
+      }
+    })
     return () => {
       window.electronAPI.removeChatStreamListeners()
     }
+  }, [])
+
+  // 加载模型列表
+  useEffect(() => {
+    loadModels()
   }, [])
 
   // 自动选中最近一次对话（进入项目时）
@@ -144,6 +160,11 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
     if (conv) {
       setCurrentConversation(conv)
       loadHistory(conv.id)
+      // 对话切换时从对话的 total_tokens 恢复 token 统计
+      setTokenUsage(conv.total_tokens > 0
+        ? { prompt_tokens: conv.total_tokens, completion_tokens: 0, total_tokens: conv.total_tokens }
+        : null
+      )
     }
   }
 
@@ -157,6 +178,7 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
       addConversation(conv)
       setCurrentConversation(conv)
       setMessages([])
+      setTokenUsage(null)
     } catch {
       msgApi.error('创建对话失败')
     }
@@ -238,8 +260,16 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
 
     // 构建文档上下文并显示发送状态
     setStreamStatus(`正在准备 ${documents.length} 份文档...`)
+    const DOC_TYPE_LABEL: Record<string, string> = {
+      md: '📄 需求文档',
+      html: '🎨 设计稿',
+      xlsx: '📊 数据文档',
+    }
     const docContext = documents.length > 0
-      ? documents.map((d) => `### ${d.name}\n${d.content || '(内容为空)'}`).join('\n\n---\n\n')
+      ? documents.map((d) => {
+          const label = DOC_TYPE_LABEL[d.type] || '📄 文档'
+          return `### ${label}：${d.name}\n${d.content || '(内容为空)'}`
+        }).join('\n\n---\n\n')
       : '(未导入任何文档)'
     const systemMsg = {
       role: 'system' as const,
@@ -562,6 +592,39 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
 
       {/* 输入区 */}
       <div style={{ padding: '8px 12px', borderTop: '1px solid #303030' }}>
+        {/* 模型选择 + Context 环形图 */}
+        {currentModel && (() => {
+          const usedTokens = tokenUsage?.prompt_tokens ?? currentConversation?.total_tokens ?? 0
+          const percent = getContextPercent(usedTokens, currentModel.context_window)
+          return (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+              <Select
+                size="small"
+                value={currentModel.id}
+                onChange={async (id) => {
+                  await setDefaultModel(id)
+                  msgApi.success('已切换模型')
+                }}
+                options={models.map(m => ({ label: m.model_name, value: m.id }))}
+                style={{ flex: 1 }}
+                placeholder="选择模型"
+              />
+              <Tooltip title={
+                tokenUsage
+                  ? `Prompt: ${tokenUsage.prompt_tokens.toLocaleString()} | Completion: ${tokenUsage.completion_tokens.toLocaleString()} | Total: ${tokenUsage.total_tokens.toLocaleString()}`
+                  : `对话累积: ${usedTokens.toLocaleString()} tokens`
+              }>
+                <Progress
+                  type="circle"
+                  percent={percent}
+                  size={28}
+                  strokeColor={getContextRingColor(percent)}
+                  format={() => formatContextTokens(usedTokens)}
+                />
+              </Tooltip>
+            </div>
+          )
+        })()}
         <Space.Compact style={{ width: '100%' }}>
           <TextArea
             value={input}
