@@ -26,7 +26,8 @@ const electronAPI = {
   updateConversationTitle: (id: string, title: string) => ipcRenderer.invoke(IPC.CONVERSATION_UPDATE, id, title),
   deleteConversation: (id: string) => ipcRenderer.invoke(IPC.CONVERSATION_DELETE, id),
   listMessages: (conversationId: string) => ipcRenderer.invoke(IPC.MESSAGE_LIST, conversationId),
-  sendMessage: (params: { conversation_id: string; content: string; role: 'user' | 'assistant' }) => ipcRenderer.invoke(IPC.MESSAGE_SEND, params),
+  sendMessage: (params: { conversation_id: string; content: string; role: 'user' | 'assistant'; content_type?: 'text' | 'schedule' }) => ipcRenderer.invoke(IPC.MESSAGE_SEND, params),
+  deleteMessage: (messageId: string) => ipcRenderer.invoke(IPC.MESSAGE_DELETE, messageId),
 
   // AI
   startChatStream: (messages: { role: string; content: string }[]) => ipcRenderer.invoke(IPC.AI_CHAT_STREAM, { messages }),
@@ -56,6 +57,7 @@ const electronAPI = {
   exportMarkdown: (content: string, title: string) => ipcRenderer.invoke(IPC.EXPORT_MARKDOWN, content, title),
   exportWord: (content: string, title: string) => ipcRenderer.invoke(IPC.EXPORT_WORD, content, title),
   exportPdf: (htmlContent: string, title: string) => ipcRenderer.invoke(IPC.EXPORT_PDF, htmlContent, title),
+  exportExcel: (content: string, title: string) => ipcRenderer.invoke(IPC.EXPORT_EXCEL, content, title),
 
   // 窗口
   minimizeWindow: () => ipcRenderer.send(IPC.WINDOW_MINIMIZE),

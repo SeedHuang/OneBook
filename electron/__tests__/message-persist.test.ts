@@ -52,4 +52,29 @@ describe('消息持久化', () => {
     expect(messages.length).toBeGreaterThanOrEqual(1)
     expect(messages.some((m) => m.content === '请分析需求')).toBe(true)
   })
+
+  it('应注册 message:delete handler', () => {
+    const hasDeleteHandler = handlers.has('message:delete')
+    expect(hasDeleteHandler).toBe(true)
+  })
+
+  it('message:delete 应删除用户消息及其配对 AI 回复', async () => {
+    db.createProject('p1', '测试', '')
+    db.createConversation('c1', 'p1', null, '测试对话')
+
+    // 创建消息对
+    db.createMessage('msg-user', 'c1', 'user', '请分析需求')
+    db.createMessage('msg-ai', 'c1', 'assistant', '分析结果...')
+    expect(db.listMessages('c1')).toHaveLength(2)
+
+    // 获取 message:delete handler
+    const deleteHandler = handlers.get('message:delete')
+    expect(deleteHandler).toBeDefined()
+
+    const fakeEvent = { sender: { id: 1 } }
+    await deleteHandler!(fakeEvent, 'msg-user')
+
+    // 验证两条消息都被删除
+    expect(db.listMessages('c1')).toHaveLength(0)
+  })
 })

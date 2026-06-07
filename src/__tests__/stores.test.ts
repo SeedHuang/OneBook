@@ -261,6 +261,41 @@ describe('ChatStore', () => {
     useChatStore.getState().setStreamContent('')
     expect(useChatStore.getState().streamContent).toBe('')
   })
+
+  it('removeMessages 移除指定消息', () => {
+    useChatStore.setState({
+      messages: [
+        makeMsg({ id: 'm1', role: 'user', content: '提问' }),
+        makeMsg({ id: 'm2', role: 'assistant', content: '回复' }),
+        makeMsg({ id: 'm3', role: 'user', content: '第二个问题' }),
+        makeMsg({ id: 'm4', role: 'assistant', content: '第二个回复' }),
+      ],
+    })
+    useChatStore.getState().removeMessages(['m1', 'm2'])
+    expect(useChatStore.getState().messages).toHaveLength(2)
+    expect(useChatStore.getState().messages.map((m) => m.id)).toEqual(['m3', 'm4'])
+  })
+
+  it('removeMessages 不影响其他消息', () => {
+    useChatStore.setState({
+      messages: [
+        makeMsg({ id: 'm1', role: 'user' }),
+        makeMsg({ id: 'm2', role: 'assistant' }),
+        makeMsg({ id: 'm3', role: 'user' }),
+      ],
+    })
+    useChatStore.getState().removeMessages(['m2'])
+    expect(useChatStore.getState().messages).toHaveLength(2)
+    expect(useChatStore.getState().messages.map((m) => m.id)).toEqual(['m1', 'm3'])
+  })
+
+  it('removeMessages 空数组不影响消息列表', () => {
+    useChatStore.setState({
+      messages: [makeMsg({ id: 'm1' }), makeMsg({ id: 'm2' })],
+    })
+    useChatStore.getState().removeMessages([])
+    expect(useChatStore.getState().messages).toHaveLength(2)
+  })
 })
 
 describe('SettingsStore', () => {

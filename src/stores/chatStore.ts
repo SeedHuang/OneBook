@@ -16,6 +16,7 @@ interface ChatStore {
   addMessage: (msg: Message) => void
   addConversation: (conv: Conversation) => void
   removeConversation: (id: string) => void
+  removeMessages: (ids: string[]) => void
 }
 
 export const useChatStore = create<ChatStore>((set) => ({
@@ -36,5 +37,8 @@ export const useChatStore = create<ChatStore>((set) => ({
     conversations: state.conversations.filter((c) => c.id !== id),
     currentConversation: state.currentConversation?.id === id ? null : state.currentConversation,
     messages: state.currentConversation?.id === id ? [] : state.messages,
+  })),
+  removeMessages: (ids) => set((state) => ({
+    messages: state.messages.filter((m) => !ids.includes(m.id)),
   })),
 }))

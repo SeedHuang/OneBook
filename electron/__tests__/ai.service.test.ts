@@ -57,7 +57,7 @@ describe('AI 服务', () => {
       const msgs = buildAnalysisMessages('review', '# 需求文档')
       expect(msgs).toHaveLength(2)
       expect(msgs[0].role).toBe('system')
-      expect(msgs[0].content).toContain('需求分析师')
+      expect(msgs[0].content).toContain('产品经理')
       expect(msgs[0].content).toContain('矛盾')
       expect(msgs[1].role).toBe('user')
       expect(msgs[1].content).toContain('# 需求文档')

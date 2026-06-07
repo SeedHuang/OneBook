@@ -40,6 +40,8 @@ export interface Message {
   conversation_id: string
   role: 'user' | 'assistant'
   content: string
+  /** 消息类型：'text' 普通消息，'schedule' 排期方案（显示下载按钮） */
+  content_type?: 'text' | 'schedule'
   created_at: string
 }
 
@@ -95,5 +97,6 @@ export interface ImportDocumentParams {
 export interface SendMessageParams {
   conversation_id: string
   content: string
+  content_type?: 'text' | 'schedule'
   document_id?: string
 }

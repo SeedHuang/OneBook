@@ -232,3 +232,13 @@ html, body, #root {
 .chat-markdown strong {
   color: #f9e2af;
 }
+
+/* 消息撤回按钮：默认隐藏，hover 时显示 */
+.chat-msg-retract-btn {
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.chat-msg-row:hover .chat-msg-retract-btn {
+  opacity: 1;
+}

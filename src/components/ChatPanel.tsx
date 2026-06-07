@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, Fragment } from 'react'
 import { Input, Button, Space, Typography, Dropdown, Tag, App, Avatar, Select, Popconfirm } from 'antd'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -15,12 +15,18 @@ import {
   FilePdfOutlined,
   FileWordOutlined,
   FileMarkdownOutlined,
+  FileExcelOutlined,
+  DownloadOutlined,
   LoadingOutlined,
 } from '@ant-design/icons'
 import type { MenuProps } from 'antd'
 import { useChatStore } from '../stores/chatStore'
 import { useDocumentStore } from '../stores/documentStore'
 import type { Message } from '../../shared/types'
+import systemPrompt from '../prompts/system.md?raw'
+import reviewPrompt from '../prompts/review.md?raw'
+import extractPrompt from '../prompts/extract.md?raw'
+import generatePrompt from '../prompts/generate.md?raw'
 
 const { Text } = Typography
 const { TextArea } = Input
@@ -35,57 +41,54 @@ const QUICK_ACTIONS: MenuProps['items'] = [
   { key: 'generate', label: '生成任务', icon: <FileTextOutlined /> },
 ]
 
-/** AI 分析角色定义与结构化分析框架 */
-const SYSTEM_PROMPT = `你是一位资深产品架构师和需求分析专家，拥有15年以上的产品设计、需求评审和技术架构经验。你同时具备产品经理、交互设计师和前端工程师的视角。
-
-## 分析原则
-
-1. **不遗漏** — 每个功能点必须拆解到具体的用户操作路径，覆盖正常流程、异常流程和边界条件
-2. **不假设** — 文档中未明确说明的内容必须标注为"待确认"，不脑补、不脑测
-3. **可执行** — 输出的功能点、任务必须足够具体，开发人员和测试人员可以直接引用
-4. **多角色交叉验证** — 分别从产品经理、前端工程师、测试工程师的角度审视，发现单一视角的盲区
-
-## 分析框架
-
-### 阶段一：文档概览
-- 列出所有收到的文档名称、类型和大致内容量
-- 说明文档间的关联关系（如果有的话）
-- 概述项目背景和目标用户
-
-### 阶段二：逐文档深度分析
-- **功能模块拆解**: 按业务模块分组，每个模块下列出功能点
-- **用户角色识别**: 系统涉及哪些角色，各角色的权限和操作范围
-- **交互流程梳理**: 核心操作流程、页面跳转关系、状态变化
-- **前端逻辑检查**: 表单验证规则、状态管理、权限控制、异常提示
-- **边界条件**: 空数据、加载状态、错误处理、并发场景、极端输入
-
-### 阶段三：交叉验证
-- 文档间的一致性检查（同一概念在不同文档中的定义是否冲突）
-- 完整性评估（PRD 中的功能点是否都有对应的 UI/交互设计）
-- 遗漏检测（基于行业最佳实践，指出可能遗漏的功能点）
-
-### 阶段四：问题与建议
-- 按优先级（P0/P1/P2）列出所有发现的问题
-- 每个问题给出具体的改进建议
-- 标注不确定的部分，建议与产品/设计确认
-
-## 输出要求
-- 使用 Markdown 结构化输出，方便后续引用
-- 功能点编号格式: [模块]-[编号]（如 ORD-001 订单模块第1个功能点）
-- 对于需求描述不清晰的地方，给出你的理解 + "建议确认"
-- 根据用户的具体请求调整分析重点，不必每次都输出全部阶段`
+/** 从 md 文件加载的提示词已替换内联常量 */
 
 export default function ChatPanel({ projectId }: ChatPanelProps) {
   const { message: msgApi } = App.useApp()
   const {
     conversations, currentConversation, messages, streaming, streamContent,
     setCurrentConversation, setMessages, setStreaming,
-    setStreamContent, appendStreamContent, addMessage, addConversation, removeConversation,
+    setStreamContent, appendStreamContent, addMessage, addConversation, removeConversation, removeMessages,
   } = useChatStore()
   const { currentDocument, documents } = useDocumentStore()
   const [input, setInput] = useState('')
   const [streamStatus, setStreamStatus] = useState('')
+  const [countdown, setCountdown] = useState(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const pendingMsgRef = useRef<string | null>(null)
+  /** 标记下次生成的 assistant 消息应显示“下载排期”按钮 */
+  const pendingGenerateRef = useRef(false)
+  /** 应显示“下载排期”按钮的 assistant 消息 ID 集合 */
+  const [scheduleMsgIds, setScheduleMsgIds] = useState<Set<string>>(new Set())
+
+  // 倒计时完成时自动发送
+  useEffect(() => {
+    if (countdown <= 0) return
+    const timer = setTimeout(() => {
+      if (countdown === 1 && pendingMsgRef.current !== null) {
+        const msg = pendingMsgRef.current
+        pendingMsgRef.current = null
+        setCountdown(0)
+        executeSend(msg)
+      } else {
+        setCountdown((c) => c - 1)
+      }
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [countdown])
+
+  // ESC 键撤回发送
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === 'Escape' && countdown > 0) {
+        cancelCountdown()
+      }
+    }
+    if (countdown > 0) {
+      document.addEventListener('keydown', handleKeyDown)
+    }
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [countdown])
 
   // Auto scroll
   useEffect(() => {
@@ -110,13 +113,28 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
     }
   }, [])
 
+  // 自动选中最近一次对话（进入项目时）
+  useEffect(() => {
+    if (conversations.length > 0 && !currentConversation) {
+      const latest = conversations[0] // DB 按 created_at DESC 排序，第一个就是最新的
+      setCurrentConversation(latest)
+      loadHistory(latest.id)
+    }
+  }, [conversations])
+
   // 加载对话历史消息
   async function loadHistory(conversationId: string) {
     try {
       const msgs = await window.electronAPI.listMessages(conversationId)
       setMessages(msgs)
+      // 从 DB 恢复 scheduleMsgIds：标记了 content_type='schedule' 的消息
+      const scheduleIds = new Set<string>(
+        msgs.filter((m) => m.content_type === 'schedule').map((m) => m.id)
+      )
+      setScheduleMsgIds(scheduleIds)
     } catch {
       setMessages([])
+      setScheduleMsgIds(new Set())
     }
   }
 
@@ -144,15 +162,40 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
     }
   }
 
-  async function handleSend(content?: string) {
+  /** 开始发送倒计时（对外接口） */
+  function requestSend(content?: string) {
     const text = content || input.trim()
-    if (!text || streaming) return
+    if (!text || streaming || countdown > 0) return
+    pendingMsgRef.current = text
+    setInput('')
+    setCountdown(2)
+  }
+
+  /** 取消发送倒计时 */
+  function cancelCountdown() {
+    if (pendingMsgRef.current !== null) {
+      setInput(pendingMsgRef.current)
+      pendingMsgRef.current = null
+    }
+    setCountdown(0)
+  }
+
+  /** 从消息中提取对话标题：优先取 "# 任务：XXX" 标题，否则取首行前30字 */
+  function extractTitle(text: string): string {
+    const taskMatch = text.match(/^#\s*任务[：:]\s*(.+)/m)
+    if (taskMatch) return taskMatch[1].trim()
+    const firstLine = text.split(/[\n\r]/)[0].trim()
+    return firstLine.slice(0, 30) || 'AI 对话'
+  }
+
+  /** 实际发送消息（倒计时结束后调用） */
+  async function executeSend(text: string) {
 
     // Create conversation if none
     let conv = currentConversation
     if (!conv) {
       try {
-        const newConv = await window.electronAPI.createConversation(projectId, currentDocument?.id ?? null, text.slice(0, 30))
+        const newConv = await window.electronAPI.createConversation(projectId, currentDocument?.id ?? null, extractTitle(text))
         addConversation(newConv)
         setCurrentConversation(newConv)
         conv = newConv
@@ -167,27 +210,29 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
     // 自动更新对话标题（首条消息前30字）
     if (messages.length === 0 && activeConv.title === '新对话') {
       try {
-        await window.electronAPI.updateConversationTitle(activeConv.id, text.slice(0, 30))
+        await window.electronAPI.updateConversationTitle(activeConv.id, extractTitle(text))
       } catch { /* ignore */ }
     }
 
-    // 持久化用户消息
+    // 持久化用户消息，使用 DB 返回的 UUID
+    let userMsgId: string
     try {
-      await window.electronAPI.sendMessage({ conversation_id: activeConv.id, content: text, role: 'user' })
+      const persisted = await window.electronAPI.sendMessage({ conversation_id: activeConv.id, content: text, role: 'user' })
+      userMsgId = persisted.id
     } catch {
-      // 持久化失败不阻断 UI
+      // 持久化失败时用临时 ID，不阻断 UI
+      userMsgId = Date.now().toString()
     }
 
     // Add user message locally
     const userMsg: Message = {
-      id: Date.now().toString(),
+      id: userMsgId,
       conversation_id: activeConv.id,
       role: 'user',
       content: text,
       created_at: new Date().toISOString(),
     }
     addMessage(userMsg)
-    setInput('')
     setStreaming(true)
     setStreamContent('')
 
@@ -198,7 +243,7 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
       : '(未导入任何文档)'
     const systemMsg = {
       role: 'system' as const,
-      content: `${SYSTEM_PROMPT}\n\n---\n\n## 以下是用户提供的项目文档\n\n${docContext}`,
+      content: `${systemPrompt}\n\n---\n\n## 以下是用户提供的项目文档\n\n${docContext}`,
     }
     const history = [...messages, userMsg].map((m) => ({ role: m.role, content: m.content }))
     const apiMessages = [systemMsg, ...history]
@@ -214,16 +259,34 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
         const { streaming: isStreaming, streamContent: sc } = useChatStore.getState()
         if (!isStreaming && sc) {
           clearInterval(checkDone)
-          const assistantMsg: Message = {
-            id: (Date.now() + 1).toString(),
-            conversation_id: activeConv!.id,
-            role: 'assistant',
-            content: sc,
-            created_at: new Date().toISOString(),
-          }
-          // 持久化 AI 回复
-          window.electronAPI.sendMessage({ conversation_id: activeConv!.id, content: sc, role: 'assistant' }).catch(() => {})
-          addMessage(assistantMsg)
+          // 判断是否为排期消息
+          const isSchedule = pendingGenerateRef.current
+          if (isSchedule) pendingGenerateRef.current = false
+          // 持久化 AI 回复（带 content_type 标记）
+          const contentType = isSchedule ? 'schedule' : 'text'
+          window.electronAPI.sendMessage({ conversation_id: activeConv!.id, content: sc, role: 'assistant', content_type: contentType })
+            .then((persisted) => {
+              const assistantMsg: Message = { ...persisted }
+              addMessage(assistantMsg)
+              if (isSchedule) {
+                setScheduleMsgIds((prev) => new Set(prev).add(assistantMsg.id))
+              }
+            })
+            .catch((err) => {
+              // 持久化失败时用临时 ID，不阻断 UI
+              console.error('AI 回复持久化失败:', err)
+              const assistantMsg: Message = {
+                id: (Date.now() + 1).toString(),
+                conversation_id: activeConv!.id,
+                role: 'assistant',
+                content: sc,
+                created_at: new Date().toISOString(),
+              }
+              addMessage(assistantMsg)
+              if (isSchedule) {
+                setScheduleMsgIds((prev) => new Set(prev).add(assistantMsg.id))
+              }
+            })
           setStreamContent('')
         }
       }, 100)
@@ -237,15 +300,35 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
   function handleQuickAction(key: string) {
     const docNames = documents.map((d) => `「${d.name}」`).join('、') || '项目文档'
     const prompts: Record<string, string> = {
-      review: `请对以下文档进行需求审查，检查其中的矛盾、遗漏、歧义等问题，并给出改进建议：${docNames}`,
-      extract: `请从以下文档中提取关键需求信息，包括功能点、角色、业务流程等，生成结构化摘要：${docNames}`,
-      generate: `请根据以下文档的内容，生成开发任务列表和测试用例：${docNames}`,
+      review: reviewPrompt.replace('{{docNames}}', docNames),
+      extract: extractPrompt.replace('{{docNames}}', docNames),
+      generate: generatePrompt.replace('{{docNames}}', docNames),
     }
-    handleSend(prompts[key])
+    if (key === 'generate') {
+      pendingGenerateRef.current = true
+    }
+    requestSend(prompts[key])
+  }
+
+  /** 撤回一组问答（删除用户消息 + AI回复） */
+  async function handleRetract(userMsgId: string) {
+    // 找到紧随该用户消息后的 assistant 消息
+    const idx = messages.findIndex((m) => m.id === userMsgId)
+    const idsToRemove = [userMsgId]
+    if (idx >= 0 && idx + 1 < messages.length && messages[idx + 1].role === 'assistant') {
+      idsToRemove.push(messages[idx + 1].id)
+    }
+    // 从数据库和状态中删除
+    try {
+      await window.electronAPI.deleteMessage(userMsgId)
+      removeMessages(idsToRemove)
+    } catch {
+      msgApi.error('撤回失败')
+    }
   }
 
   /** 导出对话内容为报告 */
-  async function handleExport(format: 'pdf' | 'word' | 'markdown') {
+  async function handleExport(format: 'pdf' | 'word' | 'markdown' | 'excel') {
     // 将对话消息拼接为报告内容
     const title = currentConversation?.title || 'AI 分析报告'
     const reportContent = messages
@@ -257,6 +340,8 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
         await window.electronAPI.exportMarkdown(reportContent, title)
       } else if (format === 'word') {
         await window.electronAPI.exportWord(reportContent, title)
+      } else if (format === 'excel') {
+        await window.electronAPI.exportExcel(reportContent, title)
       } else if (format === 'pdf') {
         // 简单 HTML 包装用于 PDF 导出
         const html = `<h1>${title}</h1>${messages.map((m) => `<h2>${m.role === 'user' ? '用户提问' : 'AI 回答'}</h2><div>${m.content.replace(/\n/g, '<br/>')}</div>`).join('<hr/>')}`
@@ -271,6 +356,7 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
   const exportItems: MenuProps['items'] = [
     { key: 'pdf', label: '导出 PDF', icon: <FilePdfOutlined /> },
     { key: 'word', label: '导出 Word', icon: <FileWordOutlined /> },
+    { key: 'excel', label: '导出排期', icon: <FileExcelOutlined /> },
     { key: 'markdown', label: '导出 Markdown', icon: <FileMarkdownOutlined /> },
   ]
 
@@ -285,7 +371,7 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
         </Space>
         <Space>
           {messages.length > 0 && (
-            <Dropdown menu={{ items: exportItems, onClick: ({ key }) => handleExport(key as 'pdf' | 'word' | 'markdown') }} trigger={['click']}>
+            <Dropdown menu={{ items: exportItems, onClick: ({ key }) => handleExport(key as 'pdf' | 'word' | 'markdown' | 'excel') }} trigger={['click']}>
               <Button type="text" size="small" icon={<ExportOutlined />} />
             </Dropdown>
           )}
@@ -345,7 +431,11 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
         ) : (
           <>
             {messages.map((msg) => (
-              <div key={msg.id} style={{ marginBottom: 16, display: 'flex', gap: 8, flexDirection: msg.role === 'user' ? 'row-reverse' : 'row' }}>
+              <Fragment key={msg.id}>
+              <div
+                style={{ marginBottom: 16, display: 'flex', gap: 8, flexDirection: msg.role === 'user' ? 'row-reverse' : 'row' }}
+                className="chat-msg-row"
+              >
                 <Avatar
                   size={28}
                   icon={msg.role === 'user' ? <UserOutlined /> : <RobotOutlined />}
@@ -368,7 +458,47 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
                     <div style={{ whiteSpace: 'pre-wrap' }}>{msg.content}</div>
                   )}
                 </div>
+                {msg.role === 'user' && !streaming && (
+                  <Popconfirm
+                    title="撤回这组问答？"
+                    description="该提问和 AI 回复将从上下文中移除"
+                    onConfirm={() => handleRetract(msg.id)}
+                    okText="撤回"
+                    cancelText="取消"
+                    okButtonProps={{ danger: true }}
+                  >
+                    <Button
+                      type="text"
+                      size="small"
+                      icon={<DeleteOutlined />}
+                      className="chat-msg-retract-btn"
+                      style={{ color: '#f38ba8', flexShrink: 0, alignSelf: 'flex-start' }}
+                    />
+                  </Popconfirm>
+                )}
               </div>
+                {/* 下载排期按钮：仅在“生成任务”触发的 AI 回复下方显示 */}
+                {msg.role === 'assistant' && scheduleMsgIds.has(msg.id) && (
+                  <div style={{ marginLeft: 36, marginTop: -8, marginBottom: 8 }}>
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<DownloadOutlined />}
+                      onClick={async () => {
+                        const title = currentConversation?.title || 'AI 分析报告'
+                        try {
+                          await window.electronAPI.exportExcel(msg.content, title)
+                          msgApi.success('排期导出成功')
+                        } catch {
+                          msgApi.error('导出失败')
+                        }
+                      }}
+                    >
+                      下载排期
+                    </Button>
+                  </div>
+                )}
+              </Fragment>
             ))}
 
             {/* 流式响应中 */}
@@ -411,6 +541,25 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
         </div>
       )}
 
+      {/* 发送倒计时提示 */}
+      {countdown > 0 && (
+        <div style={{
+          padding: '6px 12px',
+          background: '#2a2a3a',
+          borderTop: '1px solid #303030',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          fontSize: 12,
+          color: '#f9e2af',
+        }}>
+          <span>⏱ {countdown}s 后发送...</span>
+          <Button type="text" size="small" onClick={cancelCountdown} style={{ color: '#f38ba8', fontSize: 12 }}>
+            撤回 (ESC)
+          </Button>
+        </div>
+      )}
+
       {/* 输入区 */}
       <div style={{ padding: '8px 12px', borderTop: '1px solid #303030' }}>
         <Space.Compact style={{ width: '100%' }}>
@@ -422,16 +571,17 @@ export default function ChatPanel({ projectId }: ChatPanelProps) {
             onPressEnter={(e) => {
               if (!e.shiftKey) {
                 e.preventDefault()
-                handleSend()
+                requestSend()
               }
             }}
-            disabled={streaming}
+            disabled={streaming || countdown > 0}
           />
           <Button
             type="primary"
             icon={<SendOutlined />}
-            onClick={() => handleSend()}
+            onClick={() => requestSend()}
             loading={streaming}
+            disabled={countdown > 0}
             style={{ height: 'auto' }}
           />
         </Space.Compact>

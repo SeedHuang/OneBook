@@ -3,7 +3,8 @@
   "include": [
     "electron.vite.config.ts",
     "electron/**/*.ts",
-    "shared/**/*.ts"
+    "shared/**/*.ts",
+    "src/types/raw.d.ts"
   ],
   "compilerOptions": {
     "composite": true,

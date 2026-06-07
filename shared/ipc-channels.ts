@@ -23,6 +23,7 @@ export const IPC = {
   CONVERSATION_DELETE: 'conversation:delete',
   MESSAGE_LIST: 'message:list',
   MESSAGE_SEND: 'message:send',
+  MESSAGE_DELETE: 'message:delete',
 
   // AI
   AI_CHAT_STREAM: 'ai:chat:stream',
@@ -48,6 +49,7 @@ export const IPC = {
   EXPORT_PDF: 'export:pdf',
   EXPORT_WORD: 'export:word',
   EXPORT_MARKDOWN: 'export:markdown',
+  EXPORT_EXCEL: 'export:excel',
 
   // 窗口
   WINDOW_MINIMIZE: 'window:minimize',

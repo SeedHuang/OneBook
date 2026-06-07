@@ -117,9 +117,13 @@ export function registerIpcHandlers(): void {
   })
 
   // ---- 消息持久化 ----
-  ipcMain.handle(IPC.MESSAGE_SEND, (_, params: { conversation_id: string; content: string; role: 'user' | 'assistant' }) => {
-    log.debug('IPC: message:send', params.role)
-    return db.createMessage(uuidv4(), params.conversation_id, params.role, params.content)
+  ipcMain.handle(IPC.MESSAGE_SEND, (_, params: { conversation_id: string; content: string; role: 'user' | 'assistant'; content_type?: 'text' | 'schedule' }) => {
+    log.debug('IPC: message:send', params.role, params.content_type || 'text')
+    return db.createMessage(uuidv4(), params.conversation_id, params.role, params.content, params.content_type || 'text')
+  })
+  ipcMain.handle(IPC.MESSAGE_DELETE, (_, messageId: string) => {
+    log.info('IPC: message:delete', messageId)
+    db.deleteMessagePair(messageId)
   })
 
   // ---- AI 流式对话 ----
@@ -223,6 +227,12 @@ export function registerIpcHandlers(): void {
     const { exportPdf } = await import('../services/export.service')
     await exportPdf(htmlContent, title)
     log.info('PDF 导出完成:', title)
+  })
+  ipcMain.handle(IPC.EXPORT_EXCEL, async (_, content: string, title: string) => {
+    log.info('IPC: export:excel', title)
+    const { exportExcel } = await import('../services/export.service')
+    await exportExcel(content, title)
+    log.info('Excel 导出完成:', title)
   })
 
   // ---- 日志管理 ----

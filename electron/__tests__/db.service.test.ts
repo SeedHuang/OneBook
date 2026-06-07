@@ -20,6 +20,7 @@ import {
   deleteConversation,
   listMessages,
   createMessage,
+  deleteMessagePair,
   listAnalyses,
   createAnalysis,
   getSetting,
@@ -184,6 +185,42 @@ describe('数据库服务', () => {
       const msgs = listMessages('c1')
       expect(msgs[0].content).toBe('第一条')
       expect(msgs[2].content).toBe('第三条')
+    })
+
+    it('deleteMessagePair 应同时删除用户消息和紧随其后的 AI 回复', () => {
+      createMessage('m1', 'c1', 'user', '请分析')
+      createMessage('m2', 'c1', 'assistant', '分析结果...')
+      createMessage('m3', 'c1', 'user', '再分析')
+      createMessage('m4', 'c1', 'assistant', '好的...')
+
+      deleteMessagePair('m1')
+
+      const msgs = listMessages('c1')
+      expect(msgs).toHaveLength(2)
+      expect(msgs.map((m) => m.id)).toEqual(['m3', 'm4'])
+    })
+
+    it('deleteMessagePair 无配对回复时只删除用户消息', () => {
+      createMessage('m1', 'c1', 'user', '单独的用户消息')
+      createMessage('m2', 'c1', 'user', '另一条')
+
+      deleteMessagePair('m1')
+
+      const msgs = listMessages('c1')
+      expect(msgs).toHaveLength(1)
+      expect(msgs[0].id).toBe('m2')
+    })
+
+    it('deleteMessagePair 不影响其他对话的消息', () => {
+      createConversation('c2', 'p1', null, '对话2')
+      createMessage('m1', 'c1', 'user', '消息1')
+      createMessage('m2', 'c1', 'assistant', '回复1')
+      createMessage('m3', 'c2', 'user', '其他对话消息')
+
+      deleteMessagePair('m1')
+
+      expect(listMessages('c2')).toHaveLength(1)
+      expect(listMessages('c2')[0].content).toBe('其他对话消息')
     })
   })
 

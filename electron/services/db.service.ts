@@ -97,6 +97,18 @@ export function initDatabase(): void {
     log.warn('documents 表迁移检查跳过:', err instanceof Error ? err.message : String(err))
   }
 
+  // 迁移: messages 表增加 content_type 列（标记排期消息）
+  try {
+    const cols = db.pragma("table_info('messages')", { simple: false }) as Array<{ name: string }>
+    if (Array.isArray(cols) && !cols.some((c) => c.name === 'content_type')) {
+      log.info('迁移 messages 表: 添加 content_type 列')
+      db.exec("ALTER TABLE messages ADD COLUMN content_type TEXT DEFAULT 'text'")
+      log.info('迁移完成')
+    }
+  } catch (err) {
+    log.warn('messages 表迁移检查跳过:', err instanceof Error ? err.message : String(err))
+  }
+
   log.info('数据库表结构已就绪')
 }
 
@@ -188,11 +200,35 @@ export function listMessages(conversationId: string): Message[] {
   return db.prepare('SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC').all(conversationId) as Message[]
 }
 
-export function createMessage(id: string, conversationId: string, role: 'user' | 'assistant', content: string): Message {
+export function createMessage(id: string, conversationId: string, role: 'user' | 'assistant', content: string, contentType: 'text' | 'schedule' = 'text'): Message {
   const now = new Date().toISOString()
-  db.prepare('INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)').run(id, conversationId, role, content, now)
-  log.debug('创建消息:', role, `(${id})`)
-  return { id, conversation_id: conversationId, role, content, created_at: now }
+  db.prepare('INSERT INTO messages (id, conversation_id, role, content, content_type, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, conversationId, role, content, contentType, now)
+  log.debug('创建消息:', role, `(${id})`, contentType !== 'text' ? `[${contentType}]` : '')
+  return { id, conversation_id: conversationId, role, content, content_type: contentType, created_at: now }
+}
+
+/** 删除指定消息（及紧随其后的配对消息） */
+export function deleteMessagePair(userMsgId: string): void {
+  // 查找该用户消息所在的对话
+  const userMsg = db.prepare('SELECT conversation_id FROM messages WHERE id = ?').get(userMsgId) as { conversation_id: string } | undefined
+  if (!userMsg) return
+
+  // 通过消息插入顺序查找紧随其后的 assistant 消息
+  const msgs = db.prepare(
+    'SELECT id, role FROM messages WHERE conversation_id = ? ORDER BY rowid ASC',
+  ).all(userMsg.conversation_id) as Array<{ id: string; role: string }>
+  const idx = msgs.findIndex((m) => m.id === userMsgId)
+  const nextAssistant = idx >= 0 && idx + 1 < msgs.length && msgs[idx + 1].role === 'assistant'
+    ? msgs[idx + 1].id
+    : undefined
+
+  db.prepare('DELETE FROM messages WHERE id = ?').run(userMsgId)
+  if (nextAssistant) {
+    db.prepare('DELETE FROM messages WHERE id = ?').run(nextAssistant)
+    log.debug('删除消息对:', userMsgId, nextAssistant)
+  } else {
+    log.debug('删除消息:', userMsgId)
+  }
 }
 
 // ---- 分析记录 ----

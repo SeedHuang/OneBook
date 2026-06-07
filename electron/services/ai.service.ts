@@ -9,6 +9,10 @@ import type { AIProvider, AIModelConfig, AIStreamChunk, AnalysisType } from '../
 import { getSetting } from './db.service'
 import { DEFAULT_MODEL } from '../../shared/constants'
 import { createLogger } from '../utils/logger'
+import systemPrompt from '../../src/prompts/system.md?raw'
+import reviewPrompt from '../../src/prompts/review.md?raw'
+import extractPrompt from '../../src/prompts/extract.md?raw'
+import generatePrompt from '../../src/prompts/generate.md?raw'
 
 const log = createLogger('ai')
 
@@ -99,28 +103,11 @@ export function getCurrentModel(): AIModelConfig {
   return DEFAULT_MODEL
 }
 
-/** 分析类型对应的系统 Prompt */
+/** 分析类型对应的系统 Prompt（从 md 文件加载） */
 const ANALYSIS_PROMPTS: Record<AnalysisType, string> = {
-  review: `你是一位资深的需求分析师。请对以下需求文档进行审查，检查：
-1. 矛盾检测 — 不同部分的逻辑冲突
-2. 歧义标注 — 表述不清的需求
-3. 完整性检查 — 遗漏的功能或边界条件
-4. 改进建议
-
-对每个问题标注严重性（高/中/低），按优先级排列输出。`,
-
-  extract: `你是一位资深的需求分析师。请从以下需求文档中提取结构化信息：
-1. 功能点列表
-2. 角色与权限识别
-3. 业务流程梳理
-4. 数据实体识别
-以结构化 JSON 格式输出。`,
-
-  generate: `你是一位资深的需求分析师。请基于以下需求文档生成：
-1. 测试用例（含前置条件、步骤、预期结果）
-2. 用户故事（As a... I want... So that... 格式）
-3. 开发任务拆分（含优先级和估算）
-4. 验收标准定义`,
+  review: `${systemPrompt}\n\n---\n\n${reviewPrompt}`,
+  extract: `${systemPrompt}\n\n---\n\n${extractPrompt}`,
+  generate: `${systemPrompt}\n\n---\n\n${generatePrompt}`,
 }
 
 /** 流式调用 AI API */

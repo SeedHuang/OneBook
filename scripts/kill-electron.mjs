@@ -52,3 +52,11 @@ try {
   // wmic 不可用或无 electron.exe 进程，正常跳过
   console.log('[predev] 无需清理')
 }
+
+// 设置控制台编码为 UTF-8，避免中文日志乱码
+try {
+  execSync('chcp.com 65001', { stdio: 'ignore', timeout: 3000 })
+  console.log('[predev] 控制台编码已设为 UTF-8')
+} catch {
+  // chcp 不可用时静默跳过
+}
